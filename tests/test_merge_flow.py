@@ -317,7 +317,7 @@ def _land_setup(repo: Path, monkeypatch: pytest.MonkeyPatch, view: dict) -> list
         return ""
 
     ready = [{"number": 1, "isDraft": False, "reviewDecision": "APPROVED", "statusCheckRollup": _GREEN}]
-    ready[0] |= {"baseRefName": view.get("sourceBase", "main")}
+    ready[0] |= {"baseRefName": view.get("sourceBase", "main"), "headRefOid": view.get("sourceHead", a.sha)}
     monkeypatch.setattr(cli, "_gh", gh)
     monkeypatch.setattr(cli, "_gh_open_prs", lambda _repo: ready)
     monkeypatch.setattr(cli, "fetch", lambda *_args: None)
@@ -395,3 +395,12 @@ def test_verify_rejects_a_window_that_brings_in_an_unlisted_commit(repo: Path) -
     )
 
     assert verify(repo, base, {1: a.sha}, smuggled) != []
+
+
+def test_land_refuses_when_a_source_pr_moved_after_the_fetch(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from merge_flow_kit.cli import land_window
+
+    calls = _land_setup(repo, monkeypatch, {"sourceHead": "f" * 40})
+
+    assert land_window(repo, "origin", "o/r", "main", 42, ()) == 1
+    assert calls == []
