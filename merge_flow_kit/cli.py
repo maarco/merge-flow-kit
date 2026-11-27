@@ -287,6 +287,8 @@ def open_window(root: Path, remote: str, repo: str, branch: str, result: dict[st
     title = "chore(merge-flow): land " + ", ".join(f"#{n}" for n in sorted(landed))
     if len(title) > 256:
         title = f"chore(merge-flow): land {len(landed)} PRs into {branch}"
+        if len(title) > 256:
+            title = f"chore(merge-flow): land {len(landed)} PRs"
     issues = _linked_issues(repo, landed)
     git(root, "push", "-q", "--no-follow-tags", remote, f"{result['window_commit']}:refs/heads/{head}")
     return _gh(
