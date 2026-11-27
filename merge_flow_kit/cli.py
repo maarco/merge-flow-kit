@@ -249,7 +249,9 @@ def open_window(root: Path, remote: str, repo: str, branch: str, result: dict[st
 
 def land_window(root: Path, remote: str, repo: str, branch: str, number: int, checks: tuple[str, ...]) -> int:
     """Re-check a window PR against GitHub and git, then approve and merge it (run as the merging account)."""
-    pr = json.loads(_gh("pr", "view", str(number), "--repo", repo, "--json", "body,statusCheckRollup,state"))
+    pr = json.loads(
+        _gh("pr", "view", str(number), "--repo", repo, "--json", "body,statusCheckRollup,state,baseRefName,headRefOid")
+    )
     parsed = parse_window_body(pr["body"])
     if pr["state"] != "OPEN" or parsed is None:
         print(f"#{number} is not an open merge-flow window")
@@ -258,7 +260,12 @@ def land_window(root: Path, remote: str, repo: str, branch: str, number: int, ch
     refspecs = [f"+refs/heads/{branch}:refs/merge-flow/base", f"+refs/pull/{number}/head:refs/merge-flow/window"]
     refspecs += [f"+refs/pull/{n}/head:refs/merge-flow/pr/{n}" for n in heads]
     fetch(root, remote, refspecs)
+    window = git(root, "rev-parse", "refs/merge-flow/window")[1]
     problems = []
+    if pr["baseRefName"] != branch:
+        problems.append(f"the window PR targets {pr['baseRefName']}, not {branch}")
+    if window != pr["headRefOid"]:
+        problems.append("the window head moved since its checks were read; run --land again")
     if git(root, "rev-parse", "refs/merge-flow/base")[1] != base:
         problems.append(f"{branch} moved since the window was planned; plan a new window")
     for n, sha in sorted(heads.items()):
@@ -269,13 +276,15 @@ def land_window(root: Path, remote: str, repo: str, branch: str, number: int, ch
         problems.append("not ready any more: " + ", ".join(f"#{n}" for n in not_ready))
     if not green(pr["statusCheckRollup"] or [], checks):
         problems.append("the window's required checks are not all green yet")
-    problems += verify(root, base, heads, git(root, "rev-parse", "refs/merge-flow/window")[1])
+    problems += verify(root, base, heads, window)
     if problems:
         print("\n".join(f"not landing #{number}: {p}" for p in problems))
         return 1
     note = f"Verified: exactly the approved heads of {', '.join(f'#{n}' for n in sorted(heads))} merged onto {branch}."
     _gh("pr", "review", str(number), "--repo", repo, "--approve", "--body", note)
-    _gh("pr", "merge", str(number), "--repo", repo, "--merge")
+    _gh(
+        "pr", "merge", str(number), "--repo", repo, "--merge", "--match-head-commit", window
+    )  # GitHub refuses a moved head
     print(f"landed #{number}: " + ", ".join(f"#{n}" for n in sorted(heads)))
     return 0
 
