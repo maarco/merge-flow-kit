@@ -17,7 +17,7 @@ inputs:
     description: Comma-separated required check names; default every check
     default: ""
   token:
-    description: Token for gh. For open, use one whose pushes start workflows; for land, one of an account that did not open the window
+    description: Token for gh. For open, a PAT or GitHub App token, also given to actions/checkout, since git pushes the window with the checkout's credentials; for land, a token of an account that did not open the window
     default: ${{ github.token }}
   python-version:
     description: Python used to run merge-flow
