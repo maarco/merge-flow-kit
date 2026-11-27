@@ -249,8 +249,10 @@ def open_window(root: Path, remote: str, repo: str, branch: str, result: dict[st
     """Push the planned window commit and open its PR against ``branch``; returns the PR URL."""
     landed = {h.number: h.sha for h in heads if h.number in result["landed"]}
     head = f"merge-flow/window-{result['window_commit'][:12]}"
-    git(root, "push", "-q", remote, f"{result['window_commit']}:refs/heads/{head}")
     title = "merge-flow: land " + ", ".join(f"#{n}" for n in sorted(landed))
+    if len(title) > 256:
+        title = f"merge-flow: land {len(landed)} PRs into {branch}"
+    git(root, "push", "-q", remote, f"{result['window_commit']}:refs/heads/{head}")
     return _gh(
         "pr", "create", "--repo", repo, "--base", branch, "--head", head, "--title", title,
         "--body", window_body(result["base"], landed),
