@@ -252,7 +252,7 @@ def open_window(root: Path, remote: str, repo: str, branch: str, result: dict[st
     title = "merge-flow: land " + ", ".join(f"#{n}" for n in sorted(landed))
     if len(title) > 256:
         title = f"merge-flow: land {len(landed)} PRs into {branch}"
-    git(root, "push", "-q", remote, f"{result['window_commit']}:refs/heads/{head}")
+    git(root, "push", "-q", "--no-follow-tags", remote, f"{result['window_commit']}:refs/heads/{head}")
     return _gh(
         "pr", "create", "--repo", repo, "--base", branch, "--head", head, "--title", title,
         "--body", window_body(result["base"], landed),
