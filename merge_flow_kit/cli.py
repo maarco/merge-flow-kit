@@ -201,6 +201,12 @@ def verify(repo: Path, base: str, heads: dict[int, str], window: str) -> list[st
     for n, sha in sorted(heads.items()):
         if git(repo, "merge-base", "--is-ancestor", sha, window, ok=(0, 1))[0]:
             problems.append(f"#{n} head {sha[:9]} is not in the window")
+    # Beyond the listed heads, a window holds only the flow's own merges: one per head, none of them plain commits.
+    rest = git(repo, "rev-list", "--parents", window, f"^{base}", *(f"^{sha}" for sha in heads.values()))[
+        1
+    ].splitlines()
+    if len(rest) != len(heads) or any(len(line.split()) < 3 for line in rest):
+        problems.append("the window brings in commits beyond the listed heads and the flow's merges")
     replay = plan(repo, base, [Head(n, sha, changed_files(repo, base, sha)) for n, sha in sorted(heads.items())])
     if replay["landed"] != sorted(heads) or replay["window_commit"] is None:
         problems.append(f"the listed heads no longer merge cleanly: lands {replay['landed']}")
