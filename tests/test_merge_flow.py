@@ -1,5 +1,6 @@
 """Merge flow dry run: precheck, fix order and pair-merge tree on a real git repo."""
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -291,3 +292,64 @@ def test_green_uses_the_newest_run_and_every_check_by_default() -> None:
     assert not green([old_pass, new_fail], ())
     assert not green([], ())
     assert not green([old_pass], ("t", "lint"))
+
+
+_GREEN = [{"__typename": "CheckRun", "name": "ci", "conclusion": "SUCCESS", "startedAt": "2026-11-27T10:00:00Z"}]
+
+
+def _land_setup(repo: Path, monkeypatch: pytest.MonkeyPatch, view: dict) -> list:
+    """A planned window for PR 1 with refs/merge-flow/* in place and every GitHub call stubbed."""
+    from merge_flow_kit import cli
+
+    base = _git(repo, "rev-parse", "main")
+    a = _pr(repo, 1, "a.txt", "ONE\ntwo\nthree\nfour\nfive\n")
+    window = plan(repo, base, [a])["window_commit"]
+    for ref, sha in (("base", base), ("pr/1", a.sha), ("window", window)):
+        _git(repo, "update-ref", f"refs/merge-flow/{ref}", sha)
+    calls: list[tuple[str, ...]] = []
+    pr = {"body": cli.window_body(base, {1: a.sha}), "statusCheckRollup": _GREEN, "state": "OPEN"}
+    pr |= {"baseRefName": "main", "headRefOid": window} | view
+
+    def gh(*args: str) -> str:
+        if args[:2] == ("pr", "view"):
+            return json.dumps(pr)
+        calls.append(args)
+        return ""
+
+    ready = [{"number": 1, "isDraft": False, "reviewDecision": "APPROVED", "statusCheckRollup": _GREEN}]
+    monkeypatch.setattr(cli, "_gh", gh)
+    monkeypatch.setattr(cli, "_gh_open_prs", lambda _repo: ready)
+    monkeypatch.setattr(cli, "fetch", lambda *_args: None)
+    return calls
+
+
+def test_land_merges_with_the_checked_head_pinned(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from merge_flow_kit.cli import land_window
+
+    calls = _land_setup(repo, monkeypatch, {})
+
+    assert land_window(repo, "origin", "o/r", "main", 42, ()) == 0
+    merge = next(c for c in calls if c[:2] == ("pr", "merge"))
+    assert merge[merge.index("--match-head-commit") + 1] == _git(repo, "rev-parse", "refs/merge-flow/window")
+
+
+def test_land_refuses_a_window_pr_that_targets_another_branch(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from merge_flow_kit.cli import land_window
+
+    calls = _land_setup(repo, monkeypatch, {"baseRefName": "release"})
+
+    assert land_window(repo, "origin", "o/r", "main", 42, ()) == 1
+    assert calls == []
+
+
+def test_land_refuses_when_the_window_head_moved_after_its_checks(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from merge_flow_kit.cli import land_window
+
+    calls = _land_setup(repo, monkeypatch, {})
+    window = _git(repo, "rev-parse", "refs/merge-flow/window")
+    parents = _git(repo, "rev-list", "--parents", "-n", "1", window).split()[1:]
+    twin = _git(repo, "commit-tree", f"{window}^{{tree}}", *[x for p in parents for x in ("-p", p)], "-m", "same files")
+    _git(repo, "update-ref", "refs/merge-flow/window", twin)
+
+    assert land_window(repo, "origin", "o/r", "main", 42, ()) == 1
+    assert calls == []
