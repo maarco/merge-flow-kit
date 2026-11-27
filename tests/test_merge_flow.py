@@ -84,9 +84,7 @@ def test_a_clash_marks_the_later_pr_for_a_fix_and_the_rest_still_land(repo: Path
     ("first_path", "second_path"),
     [("node", "node/child.txt"), ("node/child.txt", "node")],
 )
-def test_file_directory_clash_marks_later_pr_for_a_fix(
-    repo: Path, first_path: str, second_path: str
-) -> None:
+def test_file_directory_clash_marks_later_pr_for_a_fix(repo: Path, first_path: str, second_path: str) -> None:
     base = _git(repo, "rev-parse", "main")
     first = _pr(repo, 1, first_path, "first\n")
     second = _pr(repo, 2, second_path, "second\n")
