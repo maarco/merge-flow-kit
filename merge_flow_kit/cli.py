@@ -190,6 +190,7 @@ def ready_prs(items: list[dict[str, Any]], required: tuple[str, ...] = (), base:
         and item.get("reviewDecision") == "APPROVED"
         and green(item.get("statusCheckRollup") or [], required)
         and (base is None or item.get("baseRefName") == base)
+        and ("approvedCommits" not in item or item.get("headRefOid") in item["approvedCommits"])
     )
 
 
@@ -305,7 +306,7 @@ def land_window(root: Path, remote: str, repo: str, branch: str, number: int, ch
 
 def github_repo(url: str) -> str:
     """``owner/name`` from a GitHub remote URL (https, ssh or scp form)."""
-    m = re.search(r"github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?/?$", url)
+    m = re.match(r"(?:(?:https?|ssh|git)://)?(?:[^@/]+@)?github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?/?$", url)
     if not m:
         raise ValueError(f"not a GitHub remote: {url}")
     return f"{m[1]}/{m[2]}"
@@ -324,7 +325,13 @@ def _gh_open_prs(repo: str) -> list[dict[str, Any]]:
         capture_output=True,
         text=True,
     ).stdout
-    return json.loads(out)
+    items = json.loads(out)
+    for item in items:  # gh pr list leaves review commits empty; the reviews API has them
+        if item.get("reviewDecision") == "APPROVED" and not item.get("isDraft"):
+            jq = '.[] | select(.state == "APPROVED") | .commit_id'
+            approved = _gh("api", "--paginate", f"repos/{repo}/pulls/{item['number']}/reviews", "--jq", jq)
+            item["approvedCommits"] = approved.split()
+    return items
 
 
 def _summary(result: dict[str, Any]) -> str:
@@ -360,7 +367,13 @@ def main(argv: list[str] | None = None) -> int:
     checks = tuple(filter(None, args.checks.split(",")))
     if args.land:
         return land_window(root, args.remote, repo, args.base, args.land, checks)
-    numbers = [int(n) for n in args.prs.split(",")] if args.prs else ready_prs(_gh_open_prs(repo), checks, args.base)
+    listed: dict[int, str] = {}  # head each ready PR had when it was judged ready
+    if args.prs:
+        numbers = [int(n) for n in args.prs.split(",")]
+    else:
+        items = _gh_open_prs(repo)
+        numbers = ready_prs(items, checks, args.base)
+        listed = {item["number"]: item.get("headRefOid", "") for item in items if item["number"] in numbers}
     refspecs = [f"+refs/heads/{args.base}:refs/merge-flow/base"]
     refspecs += [f"+refs/pull/{n}/head:refs/merge-flow/pr/{n}" for n in numbers]
     fetch(root, args.remote, refspecs)
@@ -368,6 +381,9 @@ def main(argv: list[str] | None = None) -> int:
     heads = []
     for n in numbers:
         sha = git(root, "rev-parse", f"refs/merge-flow/pr/{n}")[1]
+        if listed.get(n, sha) != sha:
+            print(f"skipped #{n}: it moved after it was judged ready")
+            continue
         heads.append(Head(n, sha, changed_files(root, base, sha)))
 
     result = plan(root, base, heads)
