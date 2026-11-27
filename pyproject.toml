@@ -1,0 +1,43 @@
+[project]
+name = "merge-flow-kit"
+dynamic = ["version"]
+description = "Land every ready GitHub pull request in one merge: precheck clashes with git merge-tree, pair similar PRs, run CI once"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = []
+keywords = ["github", "pull-requests", "merge", "ci", "git"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Version Control :: Git",
+]
+
+[project.urls]
+Homepage = "https://github.com/maarco/merge-flow-kit"
+Issues = "https://github.com/maarco/merge-flow-kit/issues"
+Changelog = "https://github.com/maarco/merge-flow-kit/blob/main/CHANGELOG.md"
+
+[project.scripts]
+merge-flow = "merge_flow_kit.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "merge_flow_kit/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["merge_flow_kit"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
