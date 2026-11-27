@@ -280,7 +280,12 @@ def land_window(root: Path, remote: str, repo: str, branch: str, number: int, ch
     for n, sha in sorted(heads.items()):
         if git(root, "rev-parse", f"refs/merge-flow/pr/{n}")[1] != sha:
             problems.append(f"#{n} has a new head since it was approved")
-    not_ready = sorted(set(heads) - set(ready_prs(_gh_open_prs(repo), checks, branch)))
+    open_prs = _gh_open_prs(repo)
+    not_ready = sorted(set(heads) - set(ready_prs(open_prs, checks, branch)))
+    now = {item["number"]: item.get("headRefOid") for item in open_prs}
+    for n, sha in sorted(heads.items()):
+        if now.get(n) != sha:  # read with the readiness above, so a later push cannot slip in
+            problems.append(f"#{n} on GitHub is not the approved head {sha[:9]} any more")
     if not_ready:
         problems.append("not ready any more: " + ", ".join(f"#{n}" for n in not_ready))
     if not green(pr["statusCheckRollup"] or [], checks):
@@ -312,7 +317,7 @@ def fetch(repo: Path, remote: str, refspecs: list[str]) -> None:
 
 
 def _gh_open_prs(repo: str) -> list[dict[str, Any]]:
-    fields = "number,isDraft,reviewDecision,statusCheckRollup,baseRefName"
+    fields = "number,isDraft,reviewDecision,statusCheckRollup,baseRefName,headRefOid"
     out = subprocess.run(
         ["gh", "pr", "list", "--repo", repo, "--state", "open", "--limit", "200", "--json", fields],
         check=True,
