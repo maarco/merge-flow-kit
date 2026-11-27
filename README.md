@@ -73,7 +73,7 @@ Any other reported state is printed and exits 1.
               mode: plan
 
 Inputs: `mode` (`plan`, `open` or `land`; default `plan`), `window` (the PR number `land` merges), `base`,
-`prs`, `checks` (as the CLI flags), `token` (default `github.token`) and `python-version` (default 3.13).
+`prs` (plan and open only; `land` refuses it, since it merges every PR its window holds), `checks` (as the CLI flags), `token` (default `github.token`) and `python-version` (default 3.13).
 The `plan` output is the path of the plan JSON in `plan` and `open` modes.
 
 | Mode | Does | Token needs |

@@ -11,7 +11,7 @@ inputs:
     description: The branch PRs merge into
     default: main
   prs:
-    description: Comma-separated PR numbers in ready order; default every ready PR
+    description: Comma-separated PR numbers in ready order, for plan and open; default every ready PR. land refuses it
     default: ""
   checks:
     description: Comma-separated required check names; default every check
@@ -55,6 +55,10 @@ runs:
           land)
             if [ -z "$MF_WINDOW" ]; then
               echo "::error::mode land needs the window input"
+              exit 2
+            fi
+            if [ -n "$MF_PRS" ]; then
+              echo "::error::prs applies to plan and open; land merges every PR its window holds"
               exit 2
             fi
             args+=(--land "$MF_WINDOW")
