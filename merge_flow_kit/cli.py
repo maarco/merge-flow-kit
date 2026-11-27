@@ -261,9 +261,7 @@ def open_window(root: Path, remote: str, repo: str, branch: str, result: dict[st
 
 def land_window(root: Path, remote: str, repo: str, branch: str, number: int, checks: tuple[str, ...]) -> int:
     """Re-check a window PR against GitHub and git, then approve and merge it (run as the merging account)."""
-    pr = json.loads(
-        _gh("pr", "view", str(number), "--repo", repo, "--json", "body,statusCheckRollup,state,baseRefName,headRefOid")
-    )
+    pr = json.loads(_gh("pr", "view", str(number), "--repo", repo, "--json", "body,state"))
     parsed = parse_window_body(pr["body"])
     if pr["state"] != "OPEN" or parsed is None:
         print(f"#{number} is not an open merge-flow window")
@@ -274,15 +272,21 @@ def land_window(root: Path, remote: str, repo: str, branch: str, number: int, ch
     fetch(root, remote, refspecs)
     window = git(root, "rev-parse", "refs/merge-flow/window")[1]
     problems = []
-    if pr["baseRefName"] != branch:
-        problems.append(f"the window PR targets {pr['baseRefName']}, not {branch}")
-    if window != pr["headRefOid"]:
-        problems.append("the window head moved since its checks were read; run --land again")
     if git(root, "rev-parse", "refs/merge-flow/base")[1] != base:
         problems.append(f"{branch} moved since the window was planned; plan a new window")
     for n, sha in sorted(heads.items()):
         if git(root, "rev-parse", f"refs/merge-flow/pr/{n}")[1] != sha:
             problems.append(f"#{n} has a new head since it was approved")
+    problems += verify(root, base, heads, window)
+    current = json.loads(
+        _gh("pr", "view", str(number), "--repo", repo, "--json", "state,baseRefName,headRefOid,statusCheckRollup")
+    )
+    if current["state"] != "OPEN":
+        problems.append(f"the window PR is no longer open (state: {current['state']})")
+    if current["baseRefName"] != branch:
+        problems.append(f"the window PR targets {current['baseRefName']}, not {branch}")
+    if window != current["headRefOid"]:
+        problems.append("the window head moved since its checks were read; run --land again")
     open_prs = _gh_open_prs(repo)
     not_ready = sorted(set(heads) - set(ready_prs(open_prs, checks, branch)))
     now = {item["number"]: item.get("headRefOid") for item in open_prs}
@@ -291,9 +295,8 @@ def land_window(root: Path, remote: str, repo: str, branch: str, number: int, ch
             problems.append(f"#{n} on GitHub is not the approved head {sha[:9]} any more")
     if not_ready:
         problems.append("not ready any more: " + ", ".join(f"#{n}" for n in not_ready))
-    if not green(pr["statusCheckRollup"] or [], checks):
+    if not green(current["statusCheckRollup"] or [], checks):
         problems.append("the window's required checks are not all green yet")
-    problems += verify(root, base, heads, window)
     if problems:
         print("\n".join(f"not landing #{number}: {p}" for p in problems))
         return 1
