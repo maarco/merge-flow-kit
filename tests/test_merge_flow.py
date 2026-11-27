@@ -318,6 +318,8 @@ def _land_setup(repo: Path, monkeypatch: pytest.MonkeyPatch, view: dict) -> list
 
     ready = [{"number": 1, "isDraft": False, "reviewDecision": "APPROVED", "statusCheckRollup": _GREEN}]
     ready[0] |= {"baseRefName": view.get("sourceBase", "main"), "headRefOid": view.get("sourceHead", a.sha)}
+    if "sourceApproved" in view:
+        ready[0]["approvedCommits"] = view["sourceApproved"]
     monkeypatch.setattr(cli, "_gh", gh)
     monkeypatch.setattr(cli, "_gh_open_prs", lambda _repo: ready)
     monkeypatch.setattr(cli, "fetch", lambda *_args: None)
@@ -404,3 +406,53 @@ def test_land_refuses_when_a_source_pr_moved_after_the_fetch(repo: Path, monkeyp
 
     assert land_window(repo, "origin", "o/r", "main", 42, ()) == 1
     assert calls == []
+
+
+def test_an_approval_counts_only_on_the_head_it_was_given_for() -> None:
+    item = {"number": 5, "isDraft": False, "reviewDecision": "APPROVED", "statusCheckRollup": [_check("ci", "SUCCESS")]}
+
+    assert ready_prs([item | {"headRefOid": "b", "approvedCommits": ["a"]}]) == []
+    assert ready_prs([item | {"headRefOid": "b", "approvedCommits": ["a", "b"]}]) == [5]
+
+
+def test_land_refuses_a_head_nobody_approved(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from merge_flow_kit.cli import land_window
+
+    calls = _land_setup(repo, monkeypatch, {"sourceApproved": ["0" * 40]})
+
+    assert land_window(repo, "origin", "o/r", "main", 42, ()) == 1
+    assert calls == []
+
+
+def test_the_plan_skips_a_pr_that_moved_after_it_was_listed_ready(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from merge_flow_kit import cli
+
+    base = _git(repo, "rev-parse", "main")
+    listed = _pr(repo, 1, "a.txt", "ONE\ntwo\nthree\nfour\nfive\n")
+    moved = _pr(repo, 2, "b.txt", "BETA\n")
+    _git(repo, "remote", "add", "origin", "https://github.com/o/r.git")
+    item = {"isDraft": False, "reviewDecision": "APPROVED", "statusCheckRollup": [_check("ci", "SUCCESS")]}
+    item |= {"baseRefName": "main"}
+    items = [item | {"number": 1, "headRefOid": listed.sha}, item | {"number": 2, "headRefOid": "f" * 40}]
+
+    def fetch(root: Path, _remote: str, _refspecs: list[str]) -> None:
+        for ref, sha in (("base", base), ("pr/1", listed.sha), ("pr/2", moved.sha)):
+            _git(root, "update-ref", f"refs/merge-flow/{ref}", sha)
+
+    monkeypatch.setattr(cli, "_gh_open_prs", lambda _repo: items)
+    monkeypatch.setattr(cli, "fetch", fetch)
+    monkeypatch.chdir(repo)
+    out = tmp_path / "plan.json"
+
+    assert cli.main(["--json", str(out)]) == 0
+    assert json.loads(out.read_text())["prs"] == [1]
+
+
+def test_github_repo_needs_github_com_as_the_host() -> None:
+    from merge_flow_kit.cli import github_repo
+
+    for url in ("https://notgithub.com/o/r.git", "https://github.com.evil.example/o/r", "git@evilgithub.com:o/r"):
+        with pytest.raises(ValueError):
+            github_repo(url)
