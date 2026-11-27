@@ -317,6 +317,7 @@ def _land_setup(repo: Path, monkeypatch: pytest.MonkeyPatch, view: dict) -> list
         return ""
 
     ready = [{"number": 1, "isDraft": False, "reviewDecision": "APPROVED", "statusCheckRollup": _GREEN}]
+    ready[0] |= {"baseRefName": view.get("sourceBase", "main")}
     monkeypatch.setattr(cli, "_gh", gh)
     monkeypatch.setattr(cli, "_gh_open_prs", lambda _repo: ready)
     monkeypatch.setattr(cli, "fetch", lambda *_args: None)
@@ -350,6 +351,33 @@ def test_land_refuses_when_the_window_head_moved_after_its_checks(repo: Path, mo
     parents = _git(repo, "rev-list", "--parents", "-n", "1", window).split()[1:]
     twin = _git(repo, "commit-tree", f"{window}^{{tree}}", *[x for p in parents for x in ("-p", p)], "-m", "same files")
     _git(repo, "update-ref", "refs/merge-flow/window", twin)
+
+    assert land_window(repo, "origin", "o/r", "main", 42, ()) == 1
+    assert calls == []
+
+
+def test_a_queued_rerun_without_a_start_time_is_not_green() -> None:
+    old_pass = {"__typename": "CheckRun", "name": "tests", "conclusion": "SUCCESS", "startedAt": "2026-11-27T10:00:00Z"}
+    queued = {"__typename": "CheckRun", "name": "tests", "conclusion": None, "status": "QUEUED", "startedAt": None}
+    item = {"number": 42, "isDraft": False, "reviewDecision": "APPROVED", "statusCheckRollup": [old_pass, queued]}
+
+    assert ready_prs([item], ("tests",)) == []
+
+
+def test_ready_prs_only_counts_prs_into_the_base_branch() -> None:
+    def item(number: int, base: str) -> dict:
+        green = [_check("ci", "SUCCESS")]
+        return {"number": number, "isDraft": False, "reviewDecision": "APPROVED", "statusCheckRollup": green} | {
+            "baseRefName": base
+        }
+
+    assert ready_prs([item(1, "main"), item(2, "release")], (), "main") == [1]
+
+
+def test_land_refuses_a_source_pr_that_targets_another_branch(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from merge_flow_kit.cli import land_window
+
+    calls = _land_setup(repo, monkeypatch, {"sourceBase": "release"})
 
     assert land_window(repo, "origin", "o/r", "main", 42, ()) == 1
     assert calls == []
