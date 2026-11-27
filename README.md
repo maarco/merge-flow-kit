@@ -24,6 +24,21 @@ A ready PR is open, not a draft, approved, and passes every required check.
 It prints what clashes, which PRs need a fix and in which round, and what lands now. Merges are git objects
 only: nothing is pushed and nothing is written to GitHub. Fetched refs go under `refs/merge-flow/`.
 
+## Landing a window
+
+    merge-flow --open                          # push the window commit, open its PR
+    GH_TOKEN=<merging account> merge-flow --land 42
+
+`--open` pushes the planned window commit to `merge-flow/window-<sha>` and opens a PR whose body records the
+base and each landed PR's head. The window PR adds no change of its own; its checks run once on the combined
+result.
+
+`--land` merges only if all of these still hold: the base branch has not moved, every listed PR has the head
+that was approved and is still ready, the window's checks are green, and rebuilding the window from those
+heads gives the same files. Then it approves and merges the window as one merge commit. Run it as an account
+that did not open the window, since GitHub refuses self-approval. A PR marked for a fix stays out of the
+window and goes to its fixer.
+
 ## Measured
 
 Replayed on one real repo's 78 merged PRs of one week, all ready at once: one at a time with strict
