@@ -78,7 +78,7 @@ The `plan` output is the path of the plan JSON in `plan` and `open` modes.
 
 | Mode | Does | Token needs |
 |---|---|---|
-| `plan` | the dry run; writes nothing | contents and pull-requests read; the default token works |
+| `plan` | the dry run; pushes nothing and writes nothing to GitHub (the plan JSON goes to the runner's temp folder) | contents and pull-requests read; the default token works |
 | `open` | pushes the window commit and opens its PR | contents and pull-requests write, from a PAT or GitHub App token: GitHub starts no workflows for pushes made with the default `GITHUB_TOKEN`, so the window's checks would never run |
 | `land` | verifies and merges the window PR | contents and pull-requests write, for an account that did not open the window |
 
