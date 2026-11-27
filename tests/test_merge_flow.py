@@ -381,3 +381,17 @@ def test_land_refuses_a_source_pr_that_targets_another_branch(repo: Path, monkey
 
     assert land_window(repo, "origin", "o/r", "main", 42, ()) == 1
     assert calls == []
+
+
+def test_verify_rejects_a_window_that_brings_in_an_unlisted_commit(repo: Path) -> None:
+    from merge_flow_kit.cli import verify
+
+    base = _git(repo, "rev-parse", "main")
+    a = _pr(repo, 1, "a.txt", "ONE\ntwo\nthree\nfour\nfive\n")
+    unlisted = _pr(repo, 9, "c.txt", "not approved\n")
+    window = plan(repo, base, [a])["window_commit"]
+    smuggled = _git(
+        repo, "commit-tree", f"{window}^{{tree}}", "-p", base, "-p", window, "-p", unlisted.sha, "-m", "extra parent"
+    )
+
+    assert verify(repo, base, {1: a.sha}, smuggled) != []
