@@ -170,3 +170,78 @@ def test_ready_prs_without_names_require_every_reported_check() -> None:
     ]
 
     assert ready_prs(items) == [1]
+
+
+def test_a_rerun_that_failed_beats_an_earlier_success_with_the_same_name() -> None:
+    def run(state: str, at: str) -> dict[str, str]:
+        return {"__typename": "CheckRun", "name": "tests", "conclusion": state, "startedAt": at}
+
+    items = [
+        {
+            "number": 1,
+            "isDraft": False,
+            "reviewDecision": "APPROVED",
+            "statusCheckRollup": [run("SUCCESS", "2026-11-27T10:00:00Z"), run("FAILURE", "2026-11-27T11:00:00Z")],
+        },
+        {
+            "number": 2,
+            "isDraft": False,
+            "reviewDecision": "APPROVED",
+            "statusCheckRollup": [run("FAILURE", "2026-11-27T10:00:00Z"), run("SUCCESS", "2026-11-27T11:00:00Z")],
+        },
+    ]
+
+    assert ready_prs(items, ("tests",)) == [2]
+
+
+def test_a_rename_still_clashes_with_an_edit_to_the_old_path(repo: Path) -> None:
+    base = _git(repo, "rev-parse", "main")
+    _git(repo, "checkout", "-q", "-b", "pr1", "main")
+    _git(repo, "mv", "a.txt", "new.txt")
+    (repo / "new.txt").write_text("ONE\ntwo\nthree\nfour\nfive\n")
+    _git(repo, "commit", "-q", "-am", "rename")
+    sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "main")
+    a = Head(1, sha, changed_files(repo, base, sha))
+    b = _pr(repo, 2, "a.txt", "uno\ntwo\nthree\nfour\nfive\n")
+
+    result = plan(repo, base, [a, b])
+
+    assert "a.txt" in a.files
+    assert result["needs_fix"] == [{"pr": 2, "depth": 1}]
+    assert result["held"] == []
+
+
+def test_github_repo_comes_from_the_remote_url() -> None:
+    from merge_flow_kit.cli import github_repo
+
+    assert github_repo("https://github.com/owner/name.git") == "owner/name"
+    assert github_repo("https://github.com/owner/name") == "owner/name"
+    assert github_repo("git@github.com:owner/name.git") == "owner/name"
+    assert github_repo("ssh://git@github.com/owner/name.git") == "owner/name"
+    with pytest.raises(ValueError):
+        github_repo("https://gitlab.com/owner/name.git")
+
+
+def test_fetch_writes_only_merge_flow_refs(repo: Path, tmp_path: Path) -> None:
+    from merge_flow_kit.cli import fetch
+
+    _git(repo, "tag", "v-probe")
+    local = tmp_path / "local"
+    local.mkdir()
+    _git(local, "init", "-q", "-b", "main")
+
+    fetch(local, str(repo), ["+refs/heads/main:refs/merge-flow/base"])
+
+    assert _git(local, "for-each-ref", "--format=%(refname)") == "refs/merge-flow/base"
+    assert not (local / ".git" / "FETCH_HEAD").exists()
+
+
+def test_a_head_already_on_main_does_not_land(repo: Path) -> None:
+    base = _git(repo, "rev-parse", "main")
+
+    result = plan(repo, base, [Head(7, base)])
+
+    assert result["landed"] == []
+    assert result["already_on_base"] == [7]
+    assert result["window_commit"] is None
