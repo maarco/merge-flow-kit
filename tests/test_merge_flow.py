@@ -245,3 +245,46 @@ def test_a_head_already_on_main_does_not_land(repo: Path) -> None:
     assert result["landed"] == []
     assert result["already_on_base"] == [7]
     assert result["window_commit"] is None
+
+
+def test_verify_accepts_the_planned_window_and_rejects_anything_else(repo: Path) -> None:
+    from merge_flow_kit.cli import verify
+
+    base = _git(repo, "rev-parse", "main")
+    a = _pr(repo, 1, "a.txt", "ONE\ntwo\nthree\nfour\nfive\n")
+    c = _pr(repo, 3, "b.txt", "ALPHA\n")
+    window = plan(repo, base, [a, c])["window_commit"]
+
+    assert verify(repo, base, {1: a.sha, 3: c.sha}, window) == []
+
+    _git(repo, "checkout", "-q", "--detach", window)
+    (repo / "b.txt").write_text("sneaky\n")
+    _git(repo, "commit", "-q", "-am", "extra change")
+    extra = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "main")
+    assert verify(repo, base, {1: a.sha, 3: c.sha}, extra) != []
+
+    moved = _pr(repo, 7, "b.txt", "OTHER\n")
+    assert verify(repo, base, {1: a.sha, 3: moved.sha}, window) != []
+
+
+def test_window_body_round_trips_the_landed_heads() -> None:
+    from merge_flow_kit.cli import parse_window_body, window_body
+
+    body = window_body("abc123", {1450: "f00", 1458: "ba7"})
+
+    assert "#1450" in body and "#1458" in body
+    assert parse_window_body(body) == ("abc123", {1450: "f00", 1458: "ba7"})
+    assert parse_window_body("no marker here") is None
+
+
+def test_green_uses_the_newest_run_and_every_check_by_default() -> None:
+    from merge_flow_kit.cli import green
+
+    old_pass = {"__typename": "CheckRun", "name": "t", "conclusion": "SUCCESS", "startedAt": "1"}
+    new_fail = {"__typename": "CheckRun", "name": "t", "conclusion": "FAILURE", "startedAt": "2"}
+
+    assert green([old_pass], ())
+    assert not green([old_pass, new_fail], ())
+    assert not green([], ())
+    assert not green([old_pass], ("t", "lint"))
