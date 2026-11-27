@@ -35,8 +35,9 @@ result.
 
 `--land` merges only if all of these still hold: the base branch has not moved, every listed PR has the head
 that was approved and is still ready, the window's checks are green, and rebuilding the window from those
-heads gives the same files. It re-reads the window and source PR state from GitHub after the local rebuild,
-immediately before approval. Then it approves and merges the window as one merge commit. The window commit holds
+heads gives the same files. `--land` also refuses a window whose history holds anything but clean two-parent
+merges of the base and the approved heads. It re-reads the window and source PR state from GitHub after the
+local rebuild, immediately before approval. Then it approves and merges the window as one merge commit. The window commit holds
 exactly the approved heads, so a PR pushed again after these checks lands at its approved head only; its newer
 commits stay open in that PR for their own review. The target branch must require branches to be up to date
 before merging (strict required checks) or use a merge queue: `--land` reads the base once, and only GitHub

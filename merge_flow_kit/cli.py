@@ -208,6 +208,16 @@ def verify(repo: Path, base: str, heads: dict[int, str], window: str) -> list[st
     ].splitlines()
     if len(rest) != len(heads) or any(len(line.split()) < 3 for line in rest):
         problems.append("the window brings in commits beyond the listed heads and the flow's merges")
+    commits = {line.split()[0] for line in rest}
+    allowed_parents = {base, *heads.values(), *commits}
+    for line in rest:
+        sha, *parents = line.split()
+        clean_merge = len(parents) == 2 and all(parent in allowed_parents for parent in parents)
+        if clean_merge:
+            rc, merged_tree = git(repo, "merge-tree", "--write-tree", *parents, ok=(0, 1))
+            clean_merge = not rc and bool(merged_tree.splitlines()) and merged_tree.splitlines()[0] == _tree(repo, sha)
+        if not clean_merge:
+            problems.append(f"the window carries a commit that is not a clean merge of approved heads: {sha[:9]}")
     replay = plan(repo, base, [Head(n, sha, changed_files(repo, base, sha)) for n, sha in sorted(heads.items())])
     if replay["landed"] != sorted(heads) or replay["window_commit"] is None:
         problems.append(f"the listed heads no longer merge cleanly: lands {replay['landed']}")
