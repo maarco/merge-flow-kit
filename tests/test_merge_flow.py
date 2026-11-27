@@ -312,6 +312,9 @@ def _land_setup(repo: Path, monkeypatch: pytest.MonkeyPatch, view: dict) -> list
 
     def gh(*args: str) -> str:
         if args[:2] == ("pr", "view"):
+            if args[-2:] == ("--json", "state"):
+                calls.append(args)
+                return json.dumps({"state": view.get("postMergeState", "MERGED")})
             return json.dumps(pr)
         calls.append(args)
         return ""
@@ -334,6 +337,19 @@ def test_land_merges_with_the_checked_head_pinned(repo: Path, monkeypatch: pytes
     assert land_window(repo, "origin", "o/r", "main", 42, ()) == 0
     merge = next(c for c in calls if c[:2] == ("pr", "merge"))
     assert merge[merge.index("--match-head-commit") + 1] == _git(repo, "rev-parse", "refs/merge-flow/window")
+
+
+def test_land_reports_a_queued_window_as_not_landed(repo: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    from merge_flow_kit.cli import land_window
+
+    calls = _land_setup(repo, monkeypatch, {"postMergeState": "OPEN"})
+
+    assert land_window(repo, "origin", "o/r", "main", 42, ()) == 2
+    output = capsys.readouterr().out
+    assert "queued" in output
+    assert "not merged yet" in output
+    assert "landed" not in output
+    assert ("pr", "view", "42", "--repo", "o/r", "--json", "state") in calls
 
 
 def test_land_refuses_a_window_pr_that_targets_another_branch(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
