@@ -23,12 +23,45 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Tools the tests use
         run: |
-          python -m pip install --quiet pytest ruff==0.17.6
+          python -m pip install --quiet pytest pyyaml ruff==0.17.6
           git config --global user.name ci
           git config --global user.email ci@example.invalid
           git config --global init.defaultBranch main
       - run: ruff check --no-cache .
       - run: python -m pytest -q -p no:cacheprovider
+
+  action:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: The token can read this PR's check results
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          n=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json statusCheckRollup --jq '.statusCheckRollup | length')
+          echo "check results visible: $n"
+          test "$n" -gt 0
+      - id: flow
+        uses: ./
+      - name: Plan mode wrote a plan
+        env:
+          PLAN: ${{ steps.flow.outputs.plan }}
+        run: python3 -c "import json, os; assert 'window_commit' in json.load(open(os.environ['PLAN']))"
+      - id: bad
+        uses: ./
+        continue-on-error: true
+        with:
+          mode: merge
+      - name: An unknown mode fails
+        if: steps.bad.outcome != 'failure'
+        run: exit 1
 
   package:
     runs-on: ubuntu-latest

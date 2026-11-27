@@ -963,3 +963,13 @@ def test_github_repo_needs_github_com_as_the_host() -> None:
     for url in ("https://notgithub.com/o/r.git", "https://github.com.evil.example/o/r", "git@evilgithub.com:o/r"):
         with pytest.raises(ValueError):
             github_repo(url)
+
+
+@pytest.mark.parametrize("value", ["0", "-3"])
+def test_land_refuses_a_pr_number_below_one(value, tmp_path, monkeypatch, capsys):
+    # --land 0 used to read as "no --land" and run a plan that exits 0.
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as stop:
+        cli.main(["--land", value])
+    assert stop.value.code == 2
+    assert "--land" in capsys.readouterr().err

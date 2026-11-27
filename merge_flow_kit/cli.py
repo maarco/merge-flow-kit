@@ -403,6 +403,13 @@ def _summary(result: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _pr_number(text: str) -> int:
+    number = int(text)
+    if number < 1:
+        raise argparse.ArgumentTypeError(f"a PR number is 1 or more, not {text}")
+    return number
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--remote", default="origin", help="GitHub remote to read PRs from and fetch")
@@ -411,7 +418,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--checks", default="", help="comma-separated required check names; default: every check")
     parser.add_argument("--json", type=Path, help="also write the plan here")
     parser.add_argument("--open", action="store_true", help="push the window commit and open its PR")
-    parser.add_argument("--land", type=int, metavar="PR", help="verify a window PR, then approve and merge it")
+    parser.add_argument("--land", type=_pr_number, metavar="PR", help="verify a window PR, then approve and merge it")
     args = parser.parse_args(argv)
 
     root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel")[1])

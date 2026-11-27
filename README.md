@@ -51,6 +51,37 @@ window and goes to its fixer. `--land` prints `landed #N: ...` and exits 0 only 
 as `MERGED`; if it remains `OPEN` in the merge queue, it reports that it is queued but not merged yet and exits 2.
 Any other reported state is printed and exits 1.
 
+## GitHub Action
+
+    # .github/workflows/merge-flow.yml
+    on:
+      workflow_dispatch:
+      schedule:
+        - cron: "*/30 * * * *"
+    jobs:
+      plan:
+        runs-on: ubuntu-latest
+        permissions:
+          contents: read
+          pull-requests: read
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              fetch-depth: 0               # merge-tree needs the history
+          - uses: maarco/merge-flow-kit@main   # pin a commit SHA in production
+            with:
+              mode: plan
+
+Inputs: `mode` (`plan`, `open` or `land`; default `plan`), `window` (the PR number `land` merges), `base`,
+`prs` (plan and open only; `land` refuses it, since it merges every PR its window holds), `checks` (as the CLI flags), `token` (default `github.token`) and `python-version` (default 3.13).
+The `plan` output is the path of the plan JSON in `plan` and `open` modes.
+
+| Mode | Does | Token needs |
+|---|---|---|
+| `plan` | the dry run; pushes nothing and writes nothing to GitHub (the plan JSON goes to the runner's temp folder) | contents and pull-requests read; the default token works |
+| `open` | pushes the window commit and opens its PR | contents and pull-requests write, from a PAT or GitHub App token, passed as both this action's `token` and `actions/checkout`'s `token`: git pushes the window with the checkout's credentials, gh opens the PR with `token`, and GitHub starts no workflows for pushes made with the default `GITHUB_TOKEN`, so the window's checks would never run |
+| `land` | verifies and merges the window PR | contents and pull-requests write, for an account that did not open the window |
+
 ## Measured
 
 Replayed on one real repo's 78 merged PRs of one week, all ready at once: one at a time with strict
