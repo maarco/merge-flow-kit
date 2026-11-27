@@ -57,7 +57,8 @@ def git(repo: Path, *args: str, ok: tuple[int, ...] = (0,)) -> tuple[int, str]:
 def changed_files(repo: Path, base: str, sha: str) -> frozenset[str]:
     """Files the PR changes since it branched from ``base``, changelog fragments left out."""
     fork = git(repo, "merge-base", base, sha)[1]
-    names = git(repo, "diff", "--name-only", "--no-renames", fork, sha)[1].splitlines()  # a rename lists both paths
+    # a rename lists both paths
+    names = git(repo, "diff", "--name-only", "-z", "--no-renames", fork, sha)[1].split("\0")
     return frozenset(n for n in names if n and not n.startswith(IGNORED_PREFIXES))
 
 
@@ -72,8 +73,8 @@ def share_path(a: frozenset[str], b: frozenset[str]) -> bool:
 
 def clash(repo: Path, x: str, y: str) -> list[str] | None:
     """Files that clash when ``x`` and ``y`` merge, or None when they merge cleanly."""
-    rc, out = git(repo, "merge-tree", "--write-tree", "--name-only", "--no-messages", x, y, ok=(0, 1))
-    return sorted({line for line in out.splitlines()[1:] if line}) if rc else None
+    rc, out = git(repo, "merge-tree", "--write-tree", "--name-only", "-z", "--no-messages", x, y, ok=(0, 1))
+    return sorted({path for path in out.split("\0")[1:] if path}) if rc else None
 
 
 def merge(repo: Path, x: str, y: str, message: str) -> str | None:
