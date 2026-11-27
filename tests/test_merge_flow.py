@@ -454,18 +454,33 @@ def test_window_body_round_trips_the_landed_heads() -> None:
     assert parse_window_body("no marker here") is None
 
 
-def _open_window_title(monkeypatch: pytest.MonkeyPatch, numbers: list[int]) -> str:
+def _open_window_call(
+    monkeypatch: pytest.MonkeyPatch,
+    numbers: list[int],
+    issue_data: dict[int, dict] | None = None,
+) -> tuple[str, ...]:
     from merge_flow_kit import cli
 
     calls: list[tuple[str, ...]] = []
+
+    def gh(*args: str) -> str:
+        if args[:2] == ("pr", "view"):
+            return json.dumps((issue_data or {}).get(int(args[2]), {"closingIssuesReferences": [], "body": ""}))
+        calls.append(args)
+        return "https://github.com/o/r/pull/1"
+
     monkeypatch.setattr(cli, "git", lambda *_args, **_kwargs: (0, ""))
-    monkeypatch.setattr(cli, "_gh", lambda *args: calls.append(args) or "https://github.com/o/r/pull/1")
+    monkeypatch.setattr(cli, "_gh", gh)
     heads = [cli.Head(number, f"{number:040x}", frozenset()) for number in numbers]
     result = {"landed": numbers, "base": "b" * 40, "window_commit": "a" * 40}
 
     cli.open_window(Path("."), "origin", "o/r", "main", result, heads)
 
-    args = calls[0]
+    return calls[0]
+
+
+def _open_window_title(monkeypatch: pytest.MonkeyPatch, numbers: list[int]) -> str:
+    args = _open_window_call(monkeypatch, numbers)
     return args[args.index("--title") + 1]
 
 
@@ -473,13 +488,54 @@ def test_open_window_title_uses_the_pr_count_for_a_large_window(monkeypatch: pyt
     title = _open_window_title(monkeypatch, list(range(1, 79)))
 
     assert len(title) <= 256
-    assert "78 PRs" in title
+    assert title == "chore(merge-flow): land 78 PRs into main"
 
 
 def test_open_window_title_keeps_the_current_title_for_two_prs(monkeypatch: pytest.MonkeyPatch) -> None:
     title = _open_window_title(monkeypatch, [1, 3])
 
-    assert title == "merge-flow: land #1, #3"
+    assert title == "chore(merge-flow): land #1, #3"
+
+
+def test_open_window_body_lists_distinct_linked_issues_in_ascending_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _open_window_call(
+        monkeypatch,
+        [2, 1],
+        {
+            1: {
+                "closingIssuesReferences": [{"number": 9}, {"number": 3}],
+                "body": "Fixes #12 and refs #9; Closes #1",
+            },
+            2: {"closingIssuesReferences": [{"number": 12}, {"number": 7}], "body": "RESOLVES #7"},
+        },
+    )
+
+    body = args[args.index("--body") + 1]
+    assert [line for line in body.splitlines() if line.startswith("Refs #")] == [
+        "Refs #3",
+        "Refs #7",
+        "Refs #9",
+        "Refs #12",
+    ]
+    assert "Refs #1" not in [line for line in body.splitlines() if line.startswith("Refs #")]
+    assert "Refs #2" not in [line for line in body.splitlines() if line.startswith("Refs #")]
+
+
+def test_open_window_body_has_no_refs_when_landed_prs_link_no_issues(monkeypatch: pytest.MonkeyPatch) -> None:
+    args = _open_window_call(monkeypatch, [1, 2])
+
+    body = args[args.index("--body") + 1]
+    assert not any(line.startswith("Refs #") for line in body.splitlines())
+
+
+def test_land_parses_a_body_created_by_open_window(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from merge_flow_kit.cli import land_window
+
+    _land_setup(repo, monkeypatch, {}, body_from_open=True)
+
+    assert land_window(repo, "origin", "o/r", "main", 42, ()) == 0
 
 
 def test_open_window_does_not_push_tags_when_follow_tags_is_enabled(
@@ -501,7 +557,13 @@ def test_open_window_does_not_push_tags_when_follow_tags_is_enabled(
     _git(working, "tag", "-a", "v-unpublished", "-m", "reachable tag", window)
     _git(working, "config", "push.followTags", "true")
     _git(working, "remote", "add", "origin", str(remote))
-    monkeypatch.setattr(cli, "_gh", lambda *_args: "https://example.invalid/pr/1")
+    monkeypatch.setattr(
+        cli,
+        "_gh",
+        lambda *args: json.dumps({"closingIssuesReferences": [], "body": ""})
+        if args[:2] == ("pr", "view")
+        else "https://example.invalid/pr/1",
+    )
 
     cli.open_window(
         working,
@@ -542,6 +604,7 @@ def _land_setup(
     monkeypatch: pytest.MonkeyPatch,
     view: dict,
     after_verify: Callable[[dict, list[dict]], None] | None = None,
+    body_from_open: bool = False,
 ) -> list:
     """A planned window for PR 1 with refs/merge-flow/* in place and every GitHub call stubbed."""
     from merge_flow_kit import cli
@@ -552,7 +615,26 @@ def _land_setup(
     for ref, sha in (("base", base), ("pr/1", a.sha), ("window", window)):
         _git(repo, "update-ref", f"refs/merge-flow/{ref}", sha)
     calls: list[tuple[str, ...]] = []
-    pr = {"body": cli.window_body(base, {1: a.sha}), "statusCheckRollup": _GREEN, "state": "OPEN"}
+    body = cli.window_body(base, {1: a.sha})
+    if body_from_open:
+        opened: list[tuple[str, ...]] = []
+
+        def open_gh(*args: str) -> str:
+            if args[:2] == ("pr", "view"):
+                return json.dumps({"closingIssuesReferences": [], "body": ""})
+            opened.append(args)
+            return "https://github.com/o/r/pull/42"
+
+        with monkeypatch.context() as opening:
+            opening.setattr(cli, "git", lambda *_args, **_kwargs: (0, ""))
+            opening.setattr(cli, "_gh", open_gh)
+            cli.open_window(
+                repo, "origin", "o/r", "main",
+                {"base": base, "landed": [1], "window_commit": window}, [a],
+            )
+        create = opened[0]
+        body = create[create.index("--body") + 1]
+    pr = {"body": body, "statusCheckRollup": _GREEN, "state": "OPEN"}
     pr |= {"baseRefName": "main", "headRefOid": window} | view
 
     def gh(*args: str) -> str:
