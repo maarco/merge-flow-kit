@@ -4,10 +4,11 @@ import json
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from merge_flow_kit.cli import Head, changed_files, jaccard, plan, ready_prs
+from merge_flow_kit.cli import Head, _gh_open_prs, changed_files, jaccard, plan, ready_prs
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -134,6 +135,38 @@ def test_jaccard() -> None:
 
 def _check(name: str, state: str) -> dict[str, str]:
     return {"__typename": "StatusContext", "context": name, "state": state}
+
+
+def _fake_gh_pr_list(monkeypatch: pytest.MonkeyPatch, items: list[dict]) -> list[list[str]]:
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(stdout=json.dumps(items))
+
+    monkeypatch.setattr("merge_flow_kit.cli.subprocess.run", run)
+    return calls
+
+
+def test_gh_open_prs_stops_when_the_list_reaches_its_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    items = [{"number": number, "isDraft": False, "reviewDecision": "REVIEW_REQUIRED"} for number in range(1, 1001)]
+    calls = _fake_gh_pr_list(monkeypatch, items)
+
+    with pytest.raises(SystemExit, match=r"1000.*may be incomplete"):
+        _gh_open_prs("owner/repo")
+
+    assert calls[0][calls[0].index("--limit") + 1] == "1000"
+
+
+def test_gh_open_prs_returns_a_short_list_and_requests_1000(monkeypatch: pytest.MonkeyPatch) -> None:
+    items = [
+        {"number": 1, "isDraft": False, "reviewDecision": "REVIEW_REQUIRED"},
+        {"number": 2, "isDraft": True, "reviewDecision": "APPROVED"},
+    ]
+    calls = _fake_gh_pr_list(monkeypatch, items)
+
+    assert _gh_open_prs("owner/repo") == items
+    assert calls[0][calls[0].index("--limit") + 1] == "1000"
 
 
 def test_ready_prs_need_approval_green_required_checks_and_no_draft() -> None:
