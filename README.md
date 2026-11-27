@@ -37,7 +37,9 @@ result.
 that was approved and is still ready, the window's checks are green, and rebuilding the window from those
 heads gives the same files. Then it approves and merges the window as one merge commit. Run it as an account
 that did not open the window, since GitHub refuses self-approval. A PR marked for a fix stays out of the
-window and goes to its fixer.
+window and goes to its fixer. `--land` prints `landed #N: ...` and exits 0 only after GitHub reports the window
+as `MERGED`; if it remains `OPEN` in the merge queue, it reports that it is queued but not merged yet and exits 2.
+Any other reported state is printed and exits 1.
 
 ## Measured
 

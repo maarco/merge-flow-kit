@@ -300,8 +300,15 @@ def land_window(root: Path, remote: str, repo: str, branch: str, number: int, ch
     _gh(
         "pr", "merge", str(number), "--repo", repo, "--merge", "--match-head-commit", window
     )  # GitHub refuses a moved head
-    print(f"landed #{number}: " + ", ".join(f"#{n}" for n in sorted(heads)))
-    return 0
+    state = json.loads(_gh("pr", "view", str(number), "--repo", repo, "--json", "state"))["state"]
+    if state == "MERGED":
+        print(f"landed #{number}: " + ", ".join(f"#{n}" for n in sorted(heads)))
+        return 0
+    if state == "OPEN":
+        print(f"window #{number} is queued in GitHub's merge queue and is not merged yet")
+        return 2
+    print(f"window #{number} has state {state}")
+    return 1
 
 
 def github_repo(url: str) -> str:
