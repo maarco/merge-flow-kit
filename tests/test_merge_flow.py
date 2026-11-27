@@ -96,6 +96,33 @@ def test_file_directory_clash_marks_later_pr_for_a_fix(repo: Path, first_path: s
     assert result["held"] == []
 
 
+@pytest.mark.parametrize(
+    ("first_path", "second_path"),
+    [("café", "café/child.txt"), ("café/child.txt", "café")],
+)
+def test_non_ascii_file_directory_clash_marks_later_pr_for_a_fix(repo: Path, first_path: str, second_path: str) -> None:
+    _git(repo, "config", "core.quotePath", "true")
+    base = _git(repo, "rev-parse", "main")
+    first = _pr(repo, 1, first_path, "first\n")
+    second = _pr(repo, 2, second_path, "second\n")
+
+    result = plan(repo, base, [first, second])
+
+    assert any(
+        entry["prs"] == [1, 2] and entry["files"] and all(path.startswith("café") for path in entry["files"])
+        for entry in result["clashes"]
+    )
+    assert result["needs_fix"] == [{"pr": 2, "depth": 1}]
+    assert result["held"] == []
+
+
+def test_changed_files_returns_non_ascii_path_unquoted(repo: Path) -> None:
+    _git(repo, "config", "core.quotePath", "true")
+    changed = _pr(repo, 1, "café", "contents\n")
+
+    assert changed.files == frozenset({"café"})
+
+
 def test_unrelated_paths_skip_the_pair_clash_check(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     base = _git(repo, "rev-parse", "main")
     first = _pr(repo, 1, "one.txt", "one\n")
