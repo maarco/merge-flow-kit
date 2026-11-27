@@ -30,6 +30,30 @@ jobs:
       - run: ruff check --no-cache .
       - run: python -m pytest -q -p no:cacheprovider
 
+  action:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: flow
+        uses: ./
+      - name: Plan mode wrote a plan
+        env:
+          PLAN: ${{ steps.flow.outputs.plan }}
+        run: python3 -c "import json, os; assert 'window_commit' in json.load(open(os.environ['PLAN']))"
+      - id: bad
+        uses: ./
+        continue-on-error: true
+        with:
+          mode: merge
+      - name: An unknown mode fails
+        if: steps.bad.outcome != 'failure'
+        run: exit 1
+
   package:
     runs-on: ubuntu-latest
     steps:
