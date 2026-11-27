@@ -37,7 +37,9 @@ result.
 that was approved and is still ready, the window's checks are green, and rebuilding the window from those
 heads gives the same files. Then it approves and merges the window as one merge commit. The window commit holds
 exactly the approved heads, so a PR pushed again after these checks lands at its approved head only; its newer
-commits stay open in that PR for their own review. Run it as an account
+commits stay open in that PR for their own review. The target branch must require branches to be up to date
+before merging (strict required checks) or use a merge queue: `--land` reads the base once, and only GitHub
+can refuse a merge when the base moves in the seconds between that read and the merge call. Run it as an account
 that did not open the window, since GitHub refuses self-approval. A PR marked for a fix stays out of the
 window and goes to its fixer. `--land` prints `landed #N: ...` and exits 0 only after GitHub reports the window
 as `MERGED`; if it remains `OPEN` in the merge queue, it reports that it is queued but not merged yet and exits 2.
