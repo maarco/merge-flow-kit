@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import merge_flow_kit.cli as cli
+from merge_flow_kit import cli
 from merge_flow_kit.cli import Head, _gh_open_prs, changed_files, jaccard, plan, ready_prs
 
 
