@@ -16,9 +16,10 @@ A ready PR is open, not a draft, approved, and passes every required check.
 
     pip install merge-flow-kit
     cd your-repo
-    merge-flow --repo owner/name                       # every ready PR
-    merge-flow --repo owner/name --prs 12,15           # just these, in this order
-    merge-flow --repo owner/name --checks tests,lint   # only these checks are required
+    merge-flow                       # every ready PR of the GitHub repo behind origin
+    merge-flow --prs 12,15           # just these, in this order
+    merge-flow --checks tests,lint   # only these checks are required
+    merge-flow --remote upstream     # another GitHub remote
 
 It prints what clashes, which PRs need a fix and in which round, and what lands now. Merges are git objects
 only: nothing is pushed and nothing is written to GitHub. Fetched refs go under `refs/merge-flow/`.

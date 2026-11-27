@@ -7,8 +7,8 @@ PR for a fix, after any fix it depends on. The rest pair up by shared files into
 combined commit, which merges onto main as the window commit. Merges are git objects
 only: nothing is pushed and nothing is written to GitHub.
 
-    merge-flow --repo owner/name                  # every ready PR
-    merge-flow --repo owner/name --prs 1450,1458  # just these
+    merge-flow                       # every ready PR
+    merge-flow --prs 1450,1458       # just these
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ import json
 import logging
 import math
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -56,7 +57,7 @@ def git(repo: Path, *args: str, ok: tuple[int, ...] = (0,)) -> tuple[int, str]:
 def changed_files(repo: Path, base: str, sha: str) -> frozenset[str]:
     """Files the PR changes since it branched from ``base``, changelog fragments left out."""
     fork = git(repo, "merge-base", base, sha)[1]
-    names = git(repo, "diff", "--name-only", fork, sha)[1].splitlines()
+    names = git(repo, "diff", "--name-only", "--no-renames", fork, sha)[1].splitlines()  # a rename lists both paths
     return frozenset(n for n in names if n and not n.startswith(IGNORED_PREFIXES))
 
 
@@ -113,6 +114,9 @@ def plan(repo: Path, base: str, heads: list[Head], agents: int = FIX_AGENTS) -> 
 
     ``heads`` are in ready order; of two clashing PRs the later one takes the fix.
     """
+    already = [h.number for h in heads if git(repo, "merge-base", "--is-ancestor", h.sha, base, ok=(0, 1))[0] == 0]
+    prs = [h.number for h in heads]
+    heads = [h for h in heads if h.number not in already]
     clashes: list[dict[str, Any]] = []
     depth: dict[int, int] = {}
     for j, b in enumerate(heads):
@@ -144,7 +148,8 @@ def plan(repo: Path, base: str, heads: list[Head], agents: int = FIX_AGENTS) -> 
     fix_rounds = sum(math.ceil(n / agents) for n in per_depth)
     return {
         "base": base,
-        "prs": [h.number for h in heads],
+        "prs": prs,
+        "already_on_base": sorted(already),
         "clashes": clashes,
         "needs_fix": [{"pr": n, "depth": d} for n, d in sorted(depth.items(), key=lambda kv: (kv[1], kv[0]))],
         "fix_rounds": fix_rounds,
@@ -156,9 +161,13 @@ def plan(repo: Path, base: str, heads: list[Head], agents: int = FIX_AGENTS) -> 
     }
 
 
-def _passed(check: dict[str, Any]) -> tuple[str, bool]:
-    name = check.get("name") or check.get("context") or ""
-    return name, (check.get("conclusion") or check.get("state")) == "SUCCESS"
+def _latest(checks: list[dict[str, Any]]) -> dict[str, bool]:
+    """Pass or fail per check name, newest run only: a rerun replaces the run before it."""
+    latest: dict[str, bool] = {}
+    for check in sorted(checks, key=lambda c: c.get("startedAt") or ""):
+        name = check.get("name") or check.get("context") or ""
+        latest[name] = (check.get("conclusion") or check.get("state")) == "SUCCESS"
+    return latest
 
 
 def ready_prs(items: list[dict[str, Any]], required: tuple[str, ...] = ()) -> list[int]:
@@ -168,12 +177,25 @@ def ready_prs(items: list[dict[str, Any]], required: tuple[str, ...] = ()) -> li
     """
     ready = []
     for item in items:
-        results = list(map(_passed, item.get("statusCheckRollup") or []))
-        passed = {name for name, ok in results if ok}
-        need = set(required) or {name for name, _ in results}
+        results = _latest(item.get("statusCheckRollup") or [])
+        passed = {name for name, ok in results.items() if ok}
+        need = set(required) or set(results)
         if not item.get("isDraft") and item.get("reviewDecision") == "APPROVED" and need and need <= passed:
             ready.append(item["number"])
     return sorted(ready)
+
+
+def github_repo(url: str) -> str:
+    """``owner/name`` from a GitHub remote URL (https, ssh or scp form)."""
+    m = re.search(r"github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?/?$", url)
+    if not m:
+        raise ValueError(f"not a GitHub remote: {url}")
+    return f"{m[1]}/{m[2]}"
+
+
+def fetch(repo: Path, remote: str, refspecs: list[str]) -> None:
+    """Fetch into ``refspecs`` only: no tags follow, no FETCH_HEAD."""
+    git(repo, "fetch", "-q", "--no-tags", "--no-write-fetch-head", remote, *refspecs)
 
 
 def _gh_open_prs(repo: str) -> list[dict[str, Any]]:
@@ -189,6 +211,8 @@ def _gh_open_prs(repo: str) -> list[dict[str, Any]]:
 
 def _summary(result: dict[str, Any]) -> str:
     lines = [f"base {result['base'][:9]}, {len(result['prs'])} ready PRs"]
+    if result["already_on_base"]:
+        lines.append(f"already on base: {', '.join(f'#{n}' for n in result['already_on_base'])}")
     for c in result["clashes"]:
         who = " + ".join(f"#{n}" for n in c["prs"]) + (" vs main" if c.get("with") == "main" else "")
         lines.append(f"  clash {who}: {', '.join(c['files'])}")
@@ -204,8 +228,7 @@ def _summary(result: dict[str, Any]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--repo", required=True, help="owner/name on GitHub")
-    parser.add_argument("--remote", default="origin")
+    parser.add_argument("--remote", default="origin", help="GitHub remote to read PRs from and fetch")
     parser.add_argument("--base", default="main")
     parser.add_argument("--prs", help="comma-separated PR numbers in ready order; default: every ready PR")
     parser.add_argument("--checks", default="", help="comma-separated required check names; default: every check")
@@ -213,14 +236,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel")[1])
-    numbers = (
-        [int(n) for n in args.prs.split(",")]
-        if args.prs
-        else ready_prs(_gh_open_prs(args.repo), tuple(filter(None, args.checks.split(","))))
-    )
+    repo = github_repo(git(root, "remote", "get-url", args.remote)[1])  # PRs listed and fetched from one repo
+    checks = tuple(filter(None, args.checks.split(",")))
+    numbers = [int(n) for n in args.prs.split(",")] if args.prs else ready_prs(_gh_open_prs(repo), checks)
     refspecs = [f"+refs/heads/{args.base}:refs/merge-flow/base"]
     refspecs += [f"+refs/pull/{n}/head:refs/merge-flow/pr/{n}" for n in numbers]
-    git(root, "fetch", "-q", args.remote, *refspecs)
+    fetch(root, args.remote, refspecs)
     base = git(root, "rev-parse", "refs/merge-flow/base")[1]
     heads = []
     for n in numbers:
