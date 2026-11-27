@@ -54,11 +54,19 @@ def git(repo: Path, *args: str, ok: tuple[int, ...] = (0,)) -> tuple[int, str]:
     return proc.returncode, proc.stdout.strip()
 
 
+def _nul_paths(repo: Path, *args: str, ok: tuple[int, ...] = (0,)) -> tuple[int, list[str]]:
+    proc = subprocess.run(["git", "-C", str(repo), *args], check=False, capture_output=True, env=_ENV)
+    if proc.returncode not in ok:
+        raise RuntimeError(f"git {' '.join(args)} failed: {os.fsdecode(proc.stderr).strip()}")
+    return proc.returncode, [os.fsdecode(name) for name in proc.stdout.split(b"\0") if name]
+
+
 def changed_files(repo: Path, base: str, sha: str) -> frozenset[str]:
     """Files the PR changes since it branched from ``base``, changelog fragments left out."""
     fork = git(repo, "merge-base", base, sha)[1]
-    names = git(repo, "diff", "--name-only", "--no-renames", fork, sha)[1].splitlines()  # a rename lists both paths
-    return frozenset(n for n in names if n and not n.startswith(IGNORED_PREFIXES))
+    # a rename lists both paths
+    _, names = _nul_paths(repo, "diff", "--name-only", "-z", "--no-renames", fork, sha)
+    return frozenset(name for name in names if not name.startswith(IGNORED_PREFIXES))
 
 
 def jaccard(a: frozenset[str], b: frozenset[str]) -> float:
@@ -72,8 +80,8 @@ def share_path(a: frozenset[str], b: frozenset[str]) -> bool:
 
 def clash(repo: Path, x: str, y: str) -> list[str] | None:
     """Files that clash when ``x`` and ``y`` merge, or None when they merge cleanly."""
-    rc, out = git(repo, "merge-tree", "--write-tree", "--name-only", "--no-messages", x, y, ok=(0, 1))
-    return sorted({line for line in out.splitlines()[1:] if line}) if rc else None
+    rc, records = _nul_paths(repo, "merge-tree", "--write-tree", "--name-only", "-z", "--no-messages", x, y, ok=(0, 1))
+    return sorted(set(records[1:])) if rc else None
 
 
 def merge(repo: Path, x: str, y: str, message: str) -> str | None:

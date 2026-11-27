@@ -1,6 +1,7 @@
 """Merge flow dry run: precheck, fix order and pair-merge tree on a real git repo."""
 
 import json
+import os
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -9,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from merge_flow_kit import cli
-from merge_flow_kit.cli import Head, _gh_open_prs, changed_files, jaccard, plan, ready_prs
+from merge_flow_kit.cli import Head, _gh_open_prs, changed_files, clash, jaccard, plan, ready_prs
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -39,6 +40,35 @@ def _pr(repo: Path, number: int, path: str, text: str) -> Head:
     _git(repo, "checkout", "-q", "main")
     base = _git(repo, "rev-parse", "main")
     return Head(number, sha, changed_files(repo, base, sha))
+
+
+def _raw_pr(repo: Path, number: int, path: bytes, content: bytes) -> str:
+    base = _git(repo, "rev-parse", "main")
+    _git_bytes(repo, b"read-tree", base.encode("ascii"))
+    blob = _git_bytes(repo, b"hash-object", b"-w", b"--stdin", input=content).strip()
+    _git_bytes(repo, b"update-index", b"--add", b"--cacheinfo", b"100644," + blob + b"," + path)
+    tree = _git_bytes(repo, b"write-tree").strip()
+    sha = (
+        _git_bytes(
+            repo,
+            b"commit-tree",
+            tree,
+            b"-p",
+            base.encode("ascii"),
+            b"-m",
+            f"pr {number}".encode("ascii"),
+        )
+        .strip()
+        .decode("ascii")
+    )
+    _git_bytes(repo, b"read-tree", base.encode("ascii"))
+    return sha
+
+
+def _git_bytes(repo: Path, *args: bytes, input: bytes | None = None) -> bytes:
+    return subprocess.run(
+        [b"git", b"-C", os.fsencode(repo), *args], check=True, capture_output=True, input=input
+    ).stdout
 
 
 def _is_ancestor(repo: Path, older: str, newer: str) -> bool:
@@ -94,6 +124,75 @@ def test_file_directory_clash_marks_later_pr_for_a_fix(repo: Path, first_path: s
     assert any(entry["prs"] == [1, 2] for entry in result["clashes"])
     assert result["needs_fix"] == [{"pr": 2, "depth": 1}]
     assert result["held"] == []
+
+
+@pytest.mark.parametrize(
+    ("first_path", "second_path"),
+    [("café", "café/child.txt"), ("café/child.txt", "café")],
+)
+def test_non_ascii_file_directory_clash_marks_later_pr_for_a_fix(repo: Path, first_path: str, second_path: str) -> None:
+    _git(repo, "config", "core.quotePath", "true")
+    base = _git(repo, "rev-parse", "main")
+    first = _pr(repo, 1, first_path, "first\n")
+    second = _pr(repo, 2, second_path, "second\n")
+
+    result = plan(repo, base, [first, second])
+
+    assert any(
+        entry["prs"] == [1, 2] and entry["files"] and all(path.startswith("café") for path in entry["files"])
+        for entry in result["clashes"]
+    )
+    assert result["needs_fix"] == [{"pr": 2, "depth": 1}]
+    assert result["held"] == []
+
+
+def test_changed_files_returns_non_ascii_path_unquoted(repo: Path) -> None:
+    _git(repo, "config", "core.quotePath", "true")
+    changed = _pr(repo, 1, "café", "contents\n")
+
+    assert changed.files == frozenset({"café"})
+
+
+def test_leading_space_path_clash_marks_later_pr_for_a_fix(repo: Path) -> None:
+    path = " shared.txt"
+    (repo / path).write_text("base\nmiddle\nend\n")
+    _git(repo, "add", path)
+    _git(repo, "commit", "-q", "-m", "add shared path")
+    base = _git(repo, "rev-parse", "main")
+    _git(repo, "checkout", "-q", "-b", "pr1", "main")
+    (repo / path).write_text("first\nmiddle\nend\n")
+    (repo / "\tprior.txt").write_text("prior\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "pr 1")
+    first_sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "main")
+    first = Head(1, first_sha, changed_files(repo, base, first_sha))
+    second = _pr(repo, 2, path, "second\nmiddle\nend\n")
+
+    result = plan(repo, base, [first, second])
+
+    assert any(entry["prs"] == [1, 2] and entry["files"] == [path] for entry in result["clashes"])
+    assert result["needs_fix"] == [{"pr": 2, "depth": 1}]
+
+
+def test_changed_files_preserves_carriage_return_in_path(repo: Path) -> None:
+    changed = _pr(repo, 1, "carriage\rreturn.txt", "contents\n")
+
+    assert changed.files == frozenset({"carriage\rreturn.txt"})
+
+
+def test_non_utf8_path_round_trips_through_changed_files_and_clash(repo: Path) -> None:
+    raw_path = b"invalid-\xff.txt"
+    _git(repo, "config", "core.quotePath", "true")
+    base = _git(repo, "rev-parse", "main")
+    first_sha = _raw_pr(repo, 1, raw_path, b"first\nmiddle\nend\n")
+    second_sha = _raw_pr(repo, 2, raw_path, b"second\nmiddle\nend\n")
+
+    first_files = changed_files(repo, base, first_sha)
+    second_files = changed_files(repo, base, second_sha)
+
+    assert first_files == second_files == frozenset({os.fsdecode(raw_path)})
+    assert clash(repo, first_sha, second_sha) == [os.fsdecode(raw_path)]
 
 
 def test_unrelated_paths_skip_the_pair_clash_check(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
