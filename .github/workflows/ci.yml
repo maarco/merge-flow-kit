@@ -39,6 +39,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: The token can read this PR's check results
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          n=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json statusCheckRollup --jq '.statusCheckRollup | length')
+          echo "check results visible: $n"
+          test "$n" -gt 0
       - id: flow
         uses: ./
       - name: Plan mode wrote a plan
