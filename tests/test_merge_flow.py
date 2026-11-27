@@ -541,6 +541,109 @@ def test_verify_rejects_a_window_that_brings_in_an_unlisted_commit(repo: Path) -
     assert verify(repo, base, {1: a.sha}, smuggled) != []
 
 
+def test_verify_rejects_unlisted_merge_history_hidden_by_the_window_tree(repo: Path) -> None:
+    from merge_flow_kit.cli import verify
+
+    base = _git(repo, "rev-parse", "main")
+    a = _pr(repo, 1, "a.txt", "approved a\n")
+    b = _pr(repo, 2, "b.txt", "approved b\n")
+    heads = {1: a.sha, 2: b.sha}
+    expected = plan(repo, base, [a, b])["window_commit"]
+    assert expected is not None
+
+    _git(repo, "checkout", "-q", "--detach", a.sha)
+    (repo / "rogue.txt").write_text("unapproved history\n")
+    _git(repo, "add", "rogue.txt")
+    rogue_tree = _git(repo, "write-tree")
+    rogue = _git(
+        repo,
+        "commit-tree",
+        rogue_tree,
+        "-p",
+        base,
+        "-p",
+        a.sha,
+        "-m",
+        "unlisted merge",
+    )
+    forged = _git(
+        repo,
+        "commit-tree",
+        f"{expected}^{{tree}}",
+        "-p",
+        base,
+        "-p",
+        rogue,
+        "-p",
+        a.sha,
+        "-p",
+        b.sha,
+        "-m",
+        "window with unlisted merge history",
+    )
+
+    problems = verify(repo, base, heads, forged)
+    assert problems
+    assert any(rogue[:9] in problem for problem in problems)
+
+
+def test_verify_rejects_an_edited_tree_in_an_intermediate_merge(repo: Path) -> None:
+    from merge_flow_kit.cli import verify
+
+    base = _git(repo, "rev-parse", "main")
+    a = _pr(repo, 1, "a.txt", "approved a\n")
+    b = _pr(repo, 2, "b.txt", "approved b\n")
+    heads = {1: a.sha, 2: b.sha}
+    expected = plan(repo, base, [a, b])["window_commit"]
+    assert expected is not None
+
+    _git(repo, "checkout", "-q", "--detach", a.sha)
+    (repo / "rogue.txt").write_text("edited intermediate merge\n")
+    _git(repo, "add", "rogue.txt")
+    edited_tree = _git(repo, "write-tree")
+    edited_merge = _git(
+        repo,
+        "commit-tree",
+        edited_tree,
+        "-p",
+        a.sha,
+        "-p",
+        b.sha,
+        "-m",
+        "edited merge tree",
+    )
+    forged = _git(
+        repo,
+        "commit-tree",
+        f"{expected}^{{tree}}",
+        "-p",
+        base,
+        "-p",
+        edited_merge,
+        "-m",
+        "window with edited intermediate merge",
+    )
+
+    problems = verify(repo, base, heads, forged)
+    assert problems
+    assert any(edited_merge[:9] in problem for problem in problems)
+
+
+def test_verify_accepts_a_planned_window_for_three_prs(repo: Path) -> None:
+    from merge_flow_kit.cli import verify
+
+    base = _git(repo, "rev-parse", "main")
+    heads = [
+        _pr(repo, 1, "a.txt", "approved a\n"),
+        _pr(repo, 2, "b.txt", "approved b\n"),
+        _pr(repo, 3, "c.txt", "approved c\n"),
+    ]
+    window = plan(repo, base, heads)["window_commit"]
+
+    assert window is not None
+    assert verify(repo, base, {head.number: head.sha for head in heads}, window) == []
+
+
 def test_land_refuses_when_a_source_pr_moved_after_the_fetch(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from merge_flow_kit.cli import land_window
 
