@@ -247,14 +247,25 @@ def _tree(repo: Path, commit: str) -> str:
 _MARKER = "<!-- merge-flow "
 
 
-def window_body(base: str, heads: dict[int, str]) -> str:
+def window_body(base: str, heads: dict[int, str], issues: list[int] | None = None) -> str:
     rows = "\n".join(f"| #{n} | `{sha[:12]}` |" for n, sha in sorted(heads.items()))
     data = json.dumps({"base": base, "heads": {str(n): sha for n, sha in sorted(heads.items())}})
+    refs = "\n".join(f"Refs #{n}" for n in sorted(set(issues or []) - set(heads)))
+    issue_lines = f"{refs}\n\n" if refs else ""
     return (
         f"Lands {len(heads)} approved PRs in one merge onto `{base[:12]}`. Each PR keeps its reviewed head; "
         f"this PR adds no change of its own (checked by `merge-flow --land`).\n\n"
-        f"| PR | Head |\n| --- | --- |\n{rows}\n\n{_MARKER}{data} -->\n"
+        f"{issue_lines}| PR | Head |\n| --- | --- |\n{rows}\n\n{_MARKER}{data} -->\n"
     )
+
+
+def _linked_issues(repo: str, heads: dict[int, str]) -> list[int]:
+    issues: set[int] = set()
+    for number in heads:
+        pr = json.loads(_gh("pr", "view", str(number), "--repo", repo, "--json", "closingIssuesReferences,body"))
+        issues.update(item["number"] for item in pr.get("closingIssuesReferences", []))
+        issues.update(int(match) for match in re.findall(r"\b(?:Fixes|Closes|Resolves|Refs)\s+#(\d+)\b", pr.get("body") or "", re.IGNORECASE))
+    return sorted(issues - set(heads))
 
 
 def parse_window_body(body: str) -> tuple[str, dict[int, str]] | None:
@@ -273,13 +284,14 @@ def open_window(root: Path, remote: str, repo: str, branch: str, result: dict[st
     """Push the planned window commit and open its PR against ``branch``; returns the PR URL."""
     landed = {h.number: h.sha for h in heads if h.number in result["landed"]}
     head = f"merge-flow/window-{result['window_commit'][:12]}"
-    title = "merge-flow: land " + ", ".join(f"#{n}" for n in sorted(landed))
+    title = "chore(merge-flow): land " + ", ".join(f"#{n}" for n in sorted(landed))
     if len(title) > 256:
-        title = f"merge-flow: land {len(landed)} PRs into {branch}"
+        title = f"chore(merge-flow): land {len(landed)} PRs into {branch}"
+    issues = _linked_issues(repo, landed)
     git(root, "push", "-q", "--no-follow-tags", remote, f"{result['window_commit']}:refs/heads/{head}")
     return _gh(
         "pr", "create", "--repo", repo, "--base", branch, "--head", head, "--title", title,
-        "--body", window_body(result["base"], landed),
+        "--body", window_body(result["base"], landed, issues),
     ).strip()  # fmt: skip
 
 

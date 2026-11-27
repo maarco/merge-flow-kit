@@ -32,9 +32,10 @@ only: nothing is pushed and nothing is written to GitHub. Fetched refs go under 
     merge-flow --open                          # push the window commit, open its PR
     GH_TOKEN=<merging account> merge-flow --land 42
 
-`--open` pushes the planned window commit to `merge-flow/window-<sha>` and opens a PR whose body records the
-base and each landed PR's head. The window PR adds no change of its own; its checks run once on the combined
-result.
+`--open` pushes the planned window commit to `merge-flow/window-<sha>` and opens a PR titled
+`chore(merge-flow): land #A, #B` (or a count-based title for windows over GitHub's 256-character limit).
+Its body records the base and each landed PR's head, plus one `Refs #N` line for each distinct linked issue.
+The window PR adds no change of its own; its checks run once on the combined result.
 
 `--land` merges only if all of these still hold: the base branch has not moved, every listed PR has the head
 that was approved and is still ready, the window's checks are green, and rebuilding the window from those
