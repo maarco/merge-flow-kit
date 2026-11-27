@@ -36,7 +36,10 @@ def _pr(repo: Path, number: int, path: str, text: str) -> Head:
 
 
 def _is_ancestor(repo: Path, older: str, newer: str) -> bool:
-    return subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", older, newer]).returncode == 0
+    return (
+        subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", older, newer], check=False).returncode
+        == 0
+    )
 
 
 def test_disjoint_prs_land_in_one_window_commit(repo: Path) -> None:

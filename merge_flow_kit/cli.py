@@ -47,7 +47,7 @@ class Head:
 
 
 def git(repo: Path, *args: str, ok: tuple[int, ...] = (0,)) -> tuple[int, str]:
-    proc = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, env=_ENV)
+    proc = subprocess.run(["git", "-C", str(repo), *args], check=False, capture_output=True, text=True, env=_ENV)
     if proc.returncode not in ok:
         raise RuntimeError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
     return proc.returncode, proc.stdout.strip()
