@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import merge_flow_kit.cli as cli
 from merge_flow_kit.cli import Head, _gh_open_prs, changed_files, jaccard, plan, ready_prs
 
 
@@ -29,7 +30,9 @@ def repo(tmp_path: Path) -> Path:
 
 def _pr(repo: Path, number: int, path: str, text: str) -> Head:
     _git(repo, "checkout", "-q", "-b", f"pr{number}", "main")
-    (repo / path).write_text(text)
+    file_path = repo / path
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_text(text)
     _git(repo, "add", path)
     _git(repo, "commit", "-q", "-m", f"pr {number}")
     sha = _git(repo, "rev-parse", "HEAD")
@@ -75,6 +78,44 @@ def test_a_clash_marks_the_later_pr_for_a_fix_and_the_rest_still_land(repo: Path
     assert result["needs_fix"] == [{"pr": 2, "depth": 1}]
     assert result["landed"] == [1, 3]
     assert not _is_ancestor(repo, b.sha, result["window_commit"])
+
+
+@pytest.mark.parametrize(
+    ("first_path", "second_path"),
+    [("node", "node/child.txt"), ("node/child.txt", "node")],
+)
+def test_file_directory_clash_marks_later_pr_for_a_fix(
+    repo: Path, first_path: str, second_path: str
+) -> None:
+    base = _git(repo, "rev-parse", "main")
+    first = _pr(repo, 1, first_path, "first\n")
+    second = _pr(repo, 2, second_path, "second\n")
+
+    result = plan(repo, base, [first, second])
+
+    assert any(entry["prs"] == [1, 2] for entry in result["clashes"])
+    assert result["needs_fix"] == [{"pr": 2, "depth": 1}]
+    assert result["held"] == []
+
+
+def test_unrelated_paths_skip_the_pair_clash_check(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    base = _git(repo, "rev-parse", "main")
+    first = _pr(repo, 1, "one.txt", "one\n")
+    second = _pr(repo, 2, "two.txt", "two\n")
+    pair_checks: list[tuple[str, str]] = []
+    original_clash = cli.clash
+
+    def record_pair_check(repo_path: Path, x: str, y: str) -> list[str] | None:
+        if {x, y} == {first.sha, second.sha}:
+            pair_checks.append((x, y))
+        return original_clash(repo_path, x, y)
+
+    monkeypatch.setattr(cli, "clash", record_pair_check)
+    result = plan(repo, base, [first, second])
+
+    assert pair_checks == []
+    assert result["clashes"] == []
+    assert result["needs_fix"] == []
 
 
 def test_fixes_chain_when_a_pr_clashes_with_one_that_needs_a_fix(repo: Path) -> None:
