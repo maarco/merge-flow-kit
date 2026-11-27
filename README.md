@@ -21,6 +21,8 @@ A ready PR is open, not a draft, approved, and passes every required check.
     merge-flow --checks tests,lint   # only these checks are required
     merge-flow --remote upstream     # another GitHub remote
 
+The default run reads up to 1000 open PRs and stops if it reaches that limit, since the repository may have more.
+
 It prints what clashes, which PRs need a fix and in which round, and what lands now. Merges are git objects
 only: nothing is pushed and nothing is written to GitHub. Fetched refs go under `refs/merge-flow/`.
 

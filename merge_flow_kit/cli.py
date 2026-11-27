@@ -30,6 +30,7 @@ IGNORED_PREFIXES = ("changes/",)  # one fragment per PR, never shared
 CI_MINUTES = 7.2  # estimate: one CI run on the window
 FIX_MINUTES = 8.4  # estimate: one fix agent run
 FIX_AGENTS = 4
+OPEN_PR_LIMIT = 1000
 _ENV = {
     **os.environ,
     "GIT_AUTHOR_NAME": "merge-flow",
@@ -342,12 +343,14 @@ def fetch(repo: Path, remote: str, refspecs: list[str]) -> None:
 def _gh_open_prs(repo: str) -> list[dict[str, Any]]:
     fields = "number,isDraft,reviewDecision,statusCheckRollup,baseRefName,headRefOid"
     out = subprocess.run(
-        ["gh", "pr", "list", "--repo", repo, "--state", "open", "--limit", "200", "--json", fields],
+        ["gh", "pr", "list", "--repo", repo, "--state", "open", "--limit", str(OPEN_PR_LIMIT), "--json", fields],
         check=True,
         capture_output=True,
         text=True,
     ).stdout
     items = json.loads(out)
+    if len(items) >= OPEN_PR_LIMIT:
+        raise SystemExit(f"open PR list reached the {OPEN_PR_LIMIT}-PR limit; the list may be incomplete")
     for item in items:  # gh pr list leaves review commits empty; the reviews API has them
         if item.get("reviewDecision") == "APPROVED" and not item.get("isDraft"):
             jq = '.[] | select(.state == "APPROVED") | .commit_id'
