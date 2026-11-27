@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Merge flow, dry run: plan one merge that lands every ready PR.
 
 Ready PRs keep their heads. Every PR is checked against main, and every pair of PRs that
