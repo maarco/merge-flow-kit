@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -365,7 +366,12 @@ def test_green_uses_the_newest_run_and_every_check_by_default() -> None:
 _GREEN = [{"__typename": "CheckRun", "name": "ci", "conclusion": "SUCCESS", "startedAt": "2026-11-27T10:00:00Z"}]
 
 
-def _land_setup(repo: Path, monkeypatch: pytest.MonkeyPatch, view: dict) -> list:
+def _land_setup(
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    view: dict,
+    after_verify: Callable[[dict, list[dict]], None] | None = None,
+) -> list:
     """A planned window for PR 1 with refs/merge-flow/* in place and every GitHub call stubbed."""
     from merge_flow_kit import cli
 
@@ -394,6 +400,15 @@ def _land_setup(repo: Path, monkeypatch: pytest.MonkeyPatch, view: dict) -> list
     monkeypatch.setattr(cli, "_gh", gh)
     monkeypatch.setattr(cli, "_gh_open_prs", lambda _repo: ready)
     monkeypatch.setattr(cli, "fetch", lambda *_args: None)
+    if after_verify is not None:
+        verify = cli.verify
+
+        def verify_then_change_state(*args, **kwargs):
+            problems = verify(*args, **kwargs)
+            after_verify(pr, ready)
+            return problems
+
+        monkeypatch.setattr(cli, "verify", verify_then_change_state)
     return calls
 
 
@@ -405,6 +420,49 @@ def test_land_merges_with_the_checked_head_pinned(repo: Path, monkeypatch: pytes
     assert land_window(repo, "origin", "o/r", "main", 42, ()) == 0
     merge = next(c for c in calls if c[:2] == ("pr", "merge"))
     assert merge[merge.index("--match-head-commit") + 1] == _git(repo, "rev-parse", "refs/merge-flow/window")
+
+
+def test_land_refuses_when_source_readiness_changes_during_local_verification(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    from merge_flow_kit.cli import land_window
+
+    def source_turns_red(_window: dict, source_prs: list[dict]) -> None:
+        source_prs[0]["reviewDecision"] = "CHANGES_REQUESTED"
+        source_prs[0]["statusCheckRollup"] = [_check("ci", "FAILURE")]
+
+    calls = _land_setup(repo, monkeypatch, {}, after_verify=source_turns_red)
+
+    assert land_window(repo, "origin", "o/r", "main", 42, ()) == 1
+    assert not any(call[:2] == ("pr", "merge") for call in calls)
+    assert "not ready any more: #1" in capsys.readouterr().out
+
+
+def test_land_refuses_when_window_checks_turn_red_during_local_verification(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    from merge_flow_kit.cli import land_window
+
+    def window_checks_turn_red(window: dict, _source_prs: list[dict]) -> None:
+        window["statusCheckRollup"] = [_check("ci", "FAILURE")]
+
+    calls = _land_setup(repo, monkeypatch, {}, after_verify=window_checks_turn_red)
+
+    assert land_window(repo, "origin", "o/r", "main", 42, ()) == 1
+    assert not any(call[:2] == ("pr", "merge") for call in calls)
+    assert "the window's required checks are not all green yet" in capsys.readouterr().out
+
+
+def test_land_refuses_when_window_closes_during_local_verification(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from merge_flow_kit.cli import land_window
+
+    def window_closes(window: dict, _source_prs: list[dict]) -> None:
+        window["state"] = "CLOSED"
+
+    calls = _land_setup(repo, monkeypatch, {}, after_verify=window_closes)
+
+    assert land_window(repo, "origin", "o/r", "main", 42, ()) == 1
+    assert not any(call[:2] == ("pr", "merge") for call in calls)
 
 
 def test_land_reports_a_queued_window_as_not_landed(repo: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
