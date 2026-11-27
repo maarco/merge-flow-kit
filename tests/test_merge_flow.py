@@ -458,6 +458,7 @@ def _open_window_call(
     monkeypatch: pytest.MonkeyPatch,
     numbers: list[int],
     issue_data: dict[int, dict] | None = None,
+    branch: str = "main",
 ) -> tuple[str, ...]:
     from merge_flow_kit import cli
 
@@ -474,7 +475,7 @@ def _open_window_call(
     heads = [cli.Head(number, f"{number:040x}", frozenset()) for number in numbers]
     result = {"landed": numbers, "base": "b" * 40, "window_commit": "a" * 40}
 
-    cli.open_window(Path("."), "origin", "o/r", "main", result, heads)
+    cli.open_window(Path("."), "origin", "o/r", branch, result, heads)
 
     return calls[0]
 
@@ -489,6 +490,14 @@ def test_open_window_title_uses_the_pr_count_for_a_large_window(monkeypatch: pyt
 
     assert len(title) <= 256
     assert title == "chore(merge-flow): land 78 PRs into main"
+
+
+def test_open_window_title_stays_within_limit_for_a_long_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    args = _open_window_call(monkeypatch, list(range(1, 79)), branch="b" * 221)
+    title = args[args.index("--title") + 1]
+
+    assert len(title) <= 256
+    assert title.startswith("chore(merge-flow): land")
 
 
 def test_open_window_title_keeps_the_current_title_for_two_prs(monkeypatch: pytest.MonkeyPatch) -> None:
