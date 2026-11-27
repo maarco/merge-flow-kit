@@ -5,8 +5,9 @@ Land every ready GitHub pull request in one merge instead of one at a time.
 With a strict "branch must be up to date" rule, each merge puts every other open PR behind main, so each one
 merges main in and runs CI again. merge-flow plans one merge for all of them:
 
-1. **Precheck.** Each ready PR is merged with main, and every pair of PRs that shares a file is merged with
-   `git merge-tree` (seconds, no CI). A clash marks the later PR for a fix, after any fix it depends on.
+1. **Precheck.** Each ready PR is merged with main, and every pair of PRs that shares a path (the same file, or
+   a file and a folder of the same name) is merged with `git merge-tree` (seconds, no CI). A clash marks the
+   later PR for a fix, after any fix it depends on.
 2. **Pair.** The rest pair up by shared files, level by level, into one combined commit.
 3. **Window.** That commit merges onto main as the window. CI runs once on it.
 

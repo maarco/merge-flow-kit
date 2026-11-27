@@ -1,7 +1,7 @@
 """Merge flow, dry run: plan one merge that lands every ready PR.
 
 Ready PRs keep their heads. Every PR is checked against main, and every pair of PRs that
-shares a file is merged with ``git merge-tree`` (seconds, no CI). A clash marks the later
+shares a path is merged with ``git merge-tree`` (seconds, no CI). A clash marks the later
 PR for a fix, after any fix it depends on. The rest pair up by shared files into one
 combined commit, which merges onto main as the window commit. Merges are git objects
 only: nothing is pushed and nothing is written to GitHub.
@@ -65,6 +65,11 @@ def jaccard(a: frozenset[str], b: frozenset[str]) -> float:
     return len(a & b) / len(a | b) if a | b else 0.0
 
 
+def share_path(a: frozenset[str], b: frozenset[str]) -> bool:
+    """Whether changed paths are equal or one is a folder prefix of the other."""
+    return any(x == y or x.startswith(y + "/") or y.startswith(x + "/") for x in a for y in b)
+
+
 def clash(repo: Path, x: str, y: str) -> list[str] | None:
     """Files that clash when ``x`` and ``y`` merge, or None when they merge cleanly."""
     rc, out = git(repo, "merge-tree", "--write-tree", "--name-only", "--no-messages", x, y, ok=(0, 1))
@@ -125,7 +130,7 @@ def plan(repo: Path, base: str, heads: list[Head], agents: int = FIX_AGENTS) -> 
         if files is not None:
             clashes.append({"prs": [b.number], "with": "main", "files": files})
         for a in heads[:j]:
-            if a.files & b.files and (pair := clash(repo, a.sha, b.sha)) is not None:
+            if share_path(a.files, b.files) and (pair := clash(repo, a.sha, b.sha)) is not None:
                 clashes.append({"prs": [a.number, b.number], "files": pair})
                 partners.append(a.number)
         if files is not None or partners:
