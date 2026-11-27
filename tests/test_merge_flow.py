@@ -310,6 +310,46 @@ def test_open_window_title_keeps_the_current_title_for_two_prs(monkeypatch: pyte
     assert title == "merge-flow: land #1, #3"
 
 
+def test_open_window_does_not_push_tags_when_follow_tags_is_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from merge_flow_kit import cli
+
+    remote = tmp_path / "remote.git"
+    working = tmp_path / "repo"
+    subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+    working.mkdir()
+    _git(working, "init", "-q", "-b", "main")
+    _git(working, "config", "user.name", "test")
+    _git(working, "config", "user.email", "test@example.com")
+    (working / "file.txt").write_text("window\n")
+    _git(working, "add", "file.txt")
+    _git(working, "commit", "-q", "-m", "window")
+    window = _git(working, "rev-parse", "HEAD")
+    _git(working, "tag", "-a", "v-unpublished", "-m", "reachable tag", window)
+    _git(working, "config", "push.followTags", "true")
+    _git(working, "remote", "add", "origin", str(remote))
+    monkeypatch.setattr(cli, "_gh", lambda *_args: "https://example.invalid/pr/1")
+
+    cli.open_window(
+        working,
+        "origin",
+        "owner/repo",
+        "main",
+        {"base": "0" * 40, "landed": [1], "window_commit": window},
+        [Head(1, window, frozenset({"file.txt"}))],
+    )
+
+    refs = subprocess.run(
+        ["git", "--git-dir", str(remote), "for-each-ref", "--format=%(refname)"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    assert f"refs/heads/merge-flow/window-{window[:12]}" in refs
+    assert not any(ref.startswith("refs/tags/") for ref in refs)
+
+
 def test_green_uses_the_newest_run_and_every_check_by_default() -> None:
     from merge_flow_kit.cli import green
 
