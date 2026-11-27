@@ -163,7 +163,9 @@ def plan(repo: Path, base: str, heads: list[Head], agents: int = FIX_AGENTS) -> 
 def _latest(checks: list[dict[str, Any]]) -> dict[str, bool]:
     """Pass or fail per check name, newest run only: a rerun replaces the run before it."""
     latest: dict[str, bool] = {}
-    for check in sorted(checks, key=lambda c: c.get("startedAt") or ""):
+    for check in sorted(
+        checks, key=lambda c: (c.get("startedAt") is None, c.get("startedAt") or "")
+    ):  # queued = newest
         name = check.get("name") or check.get("context") or ""
         latest[name] = (check.get("conclusion") or check.get("state")) == "SUCCESS"
     return latest
@@ -176,10 +178,10 @@ def green(rollup: list[dict[str, Any]], required: tuple[str, ...]) -> bool:
     return bool(need) and all(results.get(name) for name in need)
 
 
-def ready_prs(items: list[dict[str, Any]], required: tuple[str, ...] = ()) -> list[int]:
+def ready_prs(items: list[dict[str, Any]], required: tuple[str, ...] = (), base: str | None = None) -> list[int]:
     """Numbers of open PRs that are not drafts, are approved and pass every required check.
 
-    With no ``required`` names, every check the PR reports is required.
+    With no ``required`` names, every check the PR reports is required. With ``base``, only PRs into that branch.
     """
     return sorted(
         item["number"]
@@ -187,6 +189,7 @@ def ready_prs(items: list[dict[str, Any]], required: tuple[str, ...] = ()) -> li
         if not item.get("isDraft")
         and item.get("reviewDecision") == "APPROVED"
         and green(item.get("statusCheckRollup") or [], required)
+        and (base is None or item.get("baseRefName") == base)
     )
 
 
@@ -271,7 +274,7 @@ def land_window(root: Path, remote: str, repo: str, branch: str, number: int, ch
     for n, sha in sorted(heads.items()):
         if git(root, "rev-parse", f"refs/merge-flow/pr/{n}")[1] != sha:
             problems.append(f"#{n} has a new head since it was approved")
-    not_ready = sorted(set(heads) - set(ready_prs(_gh_open_prs(repo), checks)))
+    not_ready = sorted(set(heads) - set(ready_prs(_gh_open_prs(repo), checks, branch)))
     if not_ready:
         problems.append("not ready any more: " + ", ".join(f"#{n}" for n in not_ready))
     if not green(pr["statusCheckRollup"] or [], checks):
@@ -303,7 +306,7 @@ def fetch(repo: Path, remote: str, refspecs: list[str]) -> None:
 
 
 def _gh_open_prs(repo: str) -> list[dict[str, Any]]:
-    fields = "number,isDraft,reviewDecision,statusCheckRollup"
+    fields = "number,isDraft,reviewDecision,statusCheckRollup,baseRefName"
     out = subprocess.run(
         ["gh", "pr", "list", "--repo", repo, "--state", "open", "--limit", "200", "--json", fields],
         check=True,
@@ -346,7 +349,7 @@ def main(argv: list[str] | None = None) -> int:
     checks = tuple(filter(None, args.checks.split(",")))
     if args.land:
         return land_window(root, args.remote, repo, args.base, args.land, checks)
-    numbers = [int(n) for n in args.prs.split(",")] if args.prs else ready_prs(_gh_open_prs(repo), checks)
+    numbers = [int(n) for n in args.prs.split(",")] if args.prs else ready_prs(_gh_open_prs(repo), checks, args.base)
     refspecs = [f"+refs/heads/{args.base}:refs/merge-flow/base"]
     refspecs += [f"+refs/pull/{n}/head:refs/merge-flow/pr/{n}" for n in numbers]
     fetch(root, args.remote, refspecs)
