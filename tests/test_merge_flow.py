@@ -282,6 +282,34 @@ def test_window_body_round_trips_the_landed_heads() -> None:
     assert parse_window_body("no marker here") is None
 
 
+def _open_window_title(monkeypatch: pytest.MonkeyPatch, numbers: list[int]) -> str:
+    from merge_flow_kit import cli
+
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(cli, "git", lambda *_args, **_kwargs: (0, ""))
+    monkeypatch.setattr(cli, "_gh", lambda *args: calls.append(args) or "https://github.com/o/r/pull/1")
+    heads = [cli.Head(number, f"{number:040x}", frozenset()) for number in numbers]
+    result = {"landed": numbers, "base": "b" * 40, "window_commit": "a" * 40}
+
+    cli.open_window(Path("."), "origin", "o/r", "main", result, heads)
+
+    args = calls[0]
+    return args[args.index("--title") + 1]
+
+
+def test_open_window_title_uses_the_pr_count_for_a_large_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    title = _open_window_title(monkeypatch, list(range(1, 79)))
+
+    assert len(title) <= 256
+    assert "78 PRs" in title
+
+
+def test_open_window_title_keeps_the_current_title_for_two_prs(monkeypatch: pytest.MonkeyPatch) -> None:
+    title = _open_window_title(monkeypatch, [1, 3])
+
+    assert title == "merge-flow: land #1, #3"
+
+
 def test_green_uses_the_newest_run_and_every_check_by_default() -> None:
     from merge_flow_kit.cli import green
 
