@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- README: install from the repository; the package is not on PyPI yet (#10).
 - GitHub Action (`action.yml`): `uses: maarco/merge-flow-kit@<ref>` runs `plan`, `open` or `land` in any repository's workflow.
 - `--open` uses a Conventional Commit title and adds references to linked issues in its window PR body.
 - `merge-flow` dry run: precheck with `git merge-tree`, fix order, similarity pairing, one window commit.

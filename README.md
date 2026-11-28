@@ -15,7 +15,7 @@ A ready PR is open, not a draft, approved, and passes every required check.
 
 ## Dry run
 
-    pip install merge-flow-kit
+    pip install git+https://github.com/maarco/merge-flow-kit   # not on PyPI yet
     cd your-repo
     merge-flow                       # every ready PR of the GitHub repo behind origin
     merge-flow --prs 12,15           # just these, in this order
